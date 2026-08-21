@@ -154,7 +154,12 @@ export interface Plan {
   id: string;
   summary: string;
   agents: PlannedAgent[];
-  status: 'proposed' | 'approved' | 'rejected';
+  /**
+   * `superseded` means the orchestrator proposed something different before the
+   * user decided. The old shape is dead, but it stays in the store so a stale
+   * panel or a blocked call can be told what happened rather than hanging.
+   */
+  status: 'proposed' | 'approved' | 'rejected' | 'superseded';
   /**
    * What the user wants changed.
    *
@@ -166,6 +171,17 @@ export interface Plan {
   /** Problems found before the plan may run, e.g. a need nobody provides. */
   warnings: string[];
   createdAt: string;
+  /**
+   * Set once the plan's agents have been spawned.
+   *
+   * Approval can arrive twice — the blocked call returns and the panel settles
+   * it, or a plan restored after a reload is approved while an older window's
+   * request is still alive. Spawning a second copy of the whole pipeline is not
+   * a recoverable mistake, so the run is claimed exactly once.
+   */
+  ranAt?: string;
+  /** Identity of the plan's shape, so re-proposing the same thing is not a new question. */
+  fingerprint?: string;
 }
 
 /* ------------------------------------------------------------------ *

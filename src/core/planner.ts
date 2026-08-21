@@ -1,5 +1,10 @@
 import { randomUUID } from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { Plan, PlannedAgent } from './types';
+
+/** Plans kept on disk. Enough to survive a reload; not an archive. */
+const KEEP = 50;
 
 /**
  * Holds proposed pipelines until a human approves them.
@@ -8,12 +13,45 @@ import { Plan, PlannedAgent } from './types';
  * shape first — who exists, what each owes, what depends on what — turns that
  * into a decision rather than a surprise, and it is the only point at which a
  * bad decomposition is cheap to fix.
+ *
+ * Plans outlive the window that proposed them. A pipeline is often several
+ * minutes of orchestrator work before the user ever sees it, and losing that to
+ * a reload — or to the user closing the panel to go read the code the plan is
+ * about — means paying for it twice.
  */
 export class Planner {
   private plans = new Map<string, Plan>();
-  private waiters = new Map<string, ((plan: Plan) => void)[]>();
+  private waiters = new Map<string, ((plan?: Plan) => void)[]>();
+  private readonly storePath: string | undefined;
+
+  /** @param dir The `.orchy` directory. Omit to keep plans in memory only. */
+  constructor(dir?: string) {
+    this.storePath = dir ? path.join(dir, 'plans.json') : undefined;
+    this.load();
+  }
 
   propose(summary: string, agents: PlannedAgent[]): Plan {
+    const fingerprint = Planner.fingerprint(summary, agents);
+
+    // Re-proposing an identical plan is not a second question. It happens when
+    // the orchestrator's call timed out while the user was still reading, and
+    // showing the same shape twice would only make them decide it twice.
+    const same = [...this.plans.values()].find(
+      (p) => p.status === 'proposed' && p.fingerprint === fingerprint
+    );
+    if (same) {
+      return same;
+    }
+
+    // A *different* plan means the orchestrator has revised: the pending one is
+    // dead. Settling it releases whoever is blocked on it instead of leaving
+    // that call to time out, and keeps the panel showing one live decision.
+    for (const stale of this.plans.values()) {
+      if (stale.status === 'proposed') {
+        this.settle(stale.id, 'superseded');
+      }
+    }
+
     const plan: Plan = {
       id: randomUUID().slice(0, 8),
       summary,
@@ -21,9 +59,27 @@ export class Planner {
       status: 'proposed',
       warnings: Planner.validate(agents),
       createdAt: new Date().toISOString(),
+      fingerprint,
     };
     this.plans.set(plan.id, plan);
+    this.save();
     return plan;
+  }
+
+  /** The shape of a plan, ignoring anything the user would not see as different. */
+  private static fingerprint(summary: string, agents: PlannedAgent[]): string {
+    return JSON.stringify([
+      summary.trim(),
+      agents.map((a) => [
+        a.role,
+        a.task.trim(),
+        a.model ?? '',
+        [...a.dependsOn].sort(),
+        a.provides.map((p) => p.symbol + '@' + p.file).sort(),
+        [...a.needs].sort(),
+        a.deliverables.map((d) => d.kind + ':' + d.spec).sort(),
+      ]),
+    ]);
   }
 
   /**
@@ -157,18 +213,81 @@ export class Planner {
     return [...this.plans.values()].filter((p) => p.status === 'proposed');
   }
 
-  settle(id: string, status: 'approved' | 'rejected', feedback?: string): Plan | undefined {
+  /**
+   * Whether a call is still blocked on this decision.
+   *
+   * When nothing is waiting — the window reloaded, or the orchestrator's call
+   * timed out — approval has nobody to hand the plan to, so the extension has
+   * to run it itself. Without this, approving a restored plan does nothing.
+   */
+  hasWaiter(id: string): boolean {
+    return (this.waiters.get(id)?.length ?? 0) > 0;
+  }
+
+  /**
+   * Claim the right to spawn this plan's agents. True for the first caller only.
+   *
+   * Unknown plans return true: a plan the planner never saw is not its business
+   * to guard.
+   */
+  markRan(id: string): boolean {
+    const plan = this.plans.get(id);
+    if (!plan) {
+      return true;
+    }
+    if (plan.ranAt) {
+      return false;
+    }
+    plan.ranAt = new Date().toISOString();
+    this.save();
+    return true;
+  }
+
+  settle(
+    id: string,
+    status: 'approved' | 'rejected' | 'superseded',
+    feedback?: string
+  ): Plan | undefined {
     const plan = this.plans.get(id);
     if (!plan || plan.status !== 'proposed') {
       return plan;
     }
     plan.status = status;
     plan.feedback = feedback;
+    this.save();
     for (const resolve of this.waiters.get(id) ?? []) {
       resolve(plan);
     }
     this.waiters.delete(id);
     return plan;
+  }
+
+  private load(): void {
+    if (!this.storePath) {
+      return;
+    }
+    try {
+      const stored = JSON.parse(fs.readFileSync(this.storePath, 'utf8')) as Plan[];
+      for (const plan of stored) {
+        this.plans.set(plan.id, plan);
+      }
+    } catch {
+      // No store yet, or an unreadable one. A lost plan costs a re-propose;
+      // refusing to start the extension over it costs far more.
+    }
+  }
+
+  private save(): void {
+    if (!this.storePath) {
+      return;
+    }
+    try {
+      fs.mkdirSync(path.dirname(this.storePath), { recursive: true });
+      const recent = [...this.plans.values()].slice(-KEEP);
+      fs.writeFileSync(this.storePath, JSON.stringify(recent, null, 2), 'utf8');
+    } catch {
+      // Persistence is a convenience here; the in-memory plan still works.
+    }
   }
 
   /** Resolves once a human approves or rejects, so the orchestrator can block on it. */
@@ -178,11 +297,17 @@ export class Planner {
       return Promise.resolve(plan);
     }
     return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(this.plans.get(id)), timeoutMs);
-      const done = (settled: Plan): void => {
+      const done = (settled?: Plan): void => {
         clearTimeout(timer);
-        resolve(settled);
+        // Deregister on timeout as well as on decision, so a later approval can
+        // tell that nothing is listening any more and run the plan itself.
+        this.waiters.set(
+          id,
+          (this.waiters.get(id) ?? []).filter((w) => w !== done)
+        );
+        resolve(settled ?? this.plans.get(id));
       };
+      const timer = setTimeout(() => done(), timeoutMs);
       this.waiters.set(id, [...(this.waiters.get(id) ?? []), done]);
     });
   }

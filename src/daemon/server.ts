@@ -217,21 +217,17 @@ export class DaemonServer {
             status: 'approved',
             warnings: plan.warnings,
             sessions: sessions.map(summarize),
+            note:
+              sessions.length === 0
+                ? 'Already spawned — the panel ran this plan. Use orchy_list to see its agents.'
+                : undefined,
           };
         }
-        return {
-          plan_id: plan.id,
-          status: decided?.status ?? 'proposed',
-          warnings: plan.warnings,
-          feedback: decided?.feedback,
-          note: decided?.feedback
-            ? 'The user wants changes. Revise the plan to address the feedback and propose ' +
-              'again with orchy_plan — do not spawn anything in the meantime.'
-            : decided?.status === 'rejected'
-              ? 'The user rejected this plan. Ask what to change before proposing again.'
-              : 'Still awaiting a decision. The plan is shown in the Orchy panel.',
-        };
+        return { ...this.planStatus(plan.id), warnings: plan.warnings };
       }
+
+      case '/plan_status':
+        return this.planStatus(String(body.plan_id ?? ''));
 
       case '/wait':
         return this.wait(
@@ -306,6 +302,42 @@ export class DaemonServer {
    * an agent actually became blocked. The daemon already sees every state change,
    * so it should be the thing that waits.
    */
+  /**
+   * What became of a plan, without proposing anything.
+   *
+   * The failure mode this exists to prevent: a proposal call times out while the
+   * user is still reading, the orchestrator reads that as "try again", and the
+   * two of them chase each other — a new plan replacing the one being decided,
+   * forever. Waiting is not free either, so there has to be a cheap way to ask.
+   */
+  private planStatus(id: string): Record<string, unknown> {
+    const plan = this.orchestrator.planner.get(id);
+    if (!plan) {
+      return { plan_id: id, status: 'unknown', note: 'No such plan. It may predate a reload.' };
+    }
+    const notes: Record<string, string> = {
+      proposed:
+        'Still on screen, awaiting the user decision. Do NOT propose this or any other plan ' +
+        'again — a new proposal replaces what they are reading. Either poll orchy_plan_status ' +
+        'occasionally, or stop and let the user come back to you: the plan survives a reload, ' +
+        'and its agents spawn on approval whether or not you are still waiting.',
+      approved: plan.ranAt
+        ? 'Approved and spawned. Use orchy_list to see the agents.'
+        : 'Approved. The agents are being spawned.',
+      rejected: plan.feedback
+        ? 'The user wants changes. Revise to address the feedback and propose again.'
+        : 'The user rejected this plan. Ask what to change before proposing again.',
+      superseded: 'Replaced by a newer plan you proposed. Follow that one instead.',
+    };
+    return {
+      plan_id: plan.id,
+      status: plan.status,
+      feedback: plan.feedback,
+      spawned: Boolean(plan.ranAt),
+      note: notes[plan.status],
+    };
+  }
+
   private wait(sessionIds: string[] | undefined, timeoutSeconds: number): Promise<unknown> {
     const watched = (): ReturnType<SessionRegistry['all']> =>
       this.registry.all().filter((s) => !sessionIds || sessionIds.includes(s.id));

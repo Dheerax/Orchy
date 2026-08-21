@@ -1,8 +1,8 @@
 {
   "name": "orchy",
   "displayName": "Orchy",
-  "description": "Multi-agent coding orchestration for VS Code \u2014 a grid of isolated agents, driven by an orchestrator, with live topology.",
-  "version": "0.14.0",
+  "description": "Multi-agent coding orchestration for VS Code — a grid of isolated agents, driven by an orchestrator, with live topology.",
+  "version": "0.15.0",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -211,7 +211,7 @@
           "default": 6,
           "minimum": 1,
           "maximum": 12,
-          "description": "How many agent panes share the workspace at once. More sessions than this move to the next page. Twelve is the ceiling \u2014 past that the panes are too small to read."
+          "description": "How many agent panes share the workspace at once. More sessions than this move to the next page. Twelve is the ceiling — past that the panes are too small to read."
         },
         "orchy.autoMerge": {
           "type": "boolean",

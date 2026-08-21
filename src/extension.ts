@@ -31,7 +31,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const worktrees = new WorktreeManager(root);
   const registry = new SessionRegistry(new EventLog(orchyDir));
   const backend = new OpenCodeBackend(undefined, { mini: true });
-  const planner = new Planner();
+  const planner = new Planner(orchyDir);
   const orchestrator = new Orchestrator(
     registry,
     worktrees,
@@ -48,7 +48,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry.reconcileForFreshWindow();
 
   const decidePlan = (id: string, decision: 'approved' | 'rejected', feedback?: string): void => {
-    planner.settle(id, decision, feedback);
+    // Whoever proposed the plan normally runs it on approval. But a plan
+    // restored after a reload has no caller left — that request died with the
+    // old window — so approving it would otherwise light up the panel and
+    // spawn nothing. runPlan claims the run once, so this cannot double-spawn.
+    const orphaned = !planner.hasWaiter(id);
+    const plan = planner.settle(id, decision, feedback);
+    if (decision === 'approved' && orphaned && plan) {
+      void orchestrator.runPlan(plan).then(
+        (sessions) =>
+          output.appendLine(`Ran plan ${plan.id} from the panel: ${sessions.length} agent(s).`),
+        (err: unknown) =>
+          void vscode.window.showErrorMessage(
+            `Orchy could not run the plan: ${err instanceof Error ? err.message : String(err)}`
+          )
+      );
+    }
   };
 
   const transcripts = new TranscriptDocumentProvider(registry, backend, (id) =>
@@ -92,6 +107,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       output.appendLine(`Reconnected ${adopted.length} session(s) from a previous window.`);
     }
   });
+
+  // A plan is minutes of orchestrator work and the user's decision to make.
+  // Losing it to a window reload means paying for it twice, so a plan still
+  // awaiting a decision comes back with the window.
+  const restored = planner.pending()[0];
+  if (restored) {
+    WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id), decidePlan);
+    WorkspacePanel.showPlan(restored);
+    output.appendLine(`Restored plan ${restored.id}, still awaiting your decision.`);
+  }
 
   daemon.onPlanProposed = (plan) => {
     WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id), decidePlan);

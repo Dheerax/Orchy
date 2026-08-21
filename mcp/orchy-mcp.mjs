@@ -135,7 +135,10 @@ const TOOLS = [
       'needs, and which other agents it depends on (by index). Orchy checks the plan for ' +
       'needs nobody provides, two agents promising the same symbol, dependency cycles, and ' +
       'missing deliverables, then shows it for approval. On approval every agent is spawned ' +
-      'in dependency order. Blocks until the user decides.',
+      'in dependency order. Blocks until the user decides. If it returns before a decision, ' +
+      'the user is simply still reading: check orchy_plan_status rather than proposing again, ' +
+      'because a new proposal replaces the plan on their screen. Plans survive a window ' +
+      'reload and spawn on approval whether or not you are still connected.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -182,6 +185,20 @@ const TOOLS = [
       required: ['summary', 'agents'],
     },
     route: '/plan',
+  },
+  {
+    name: 'orchy_plan_status',
+    description:
+      'What became of a plan you proposed: still awaiting a decision, approved (and whether ' +
+      'its agents were spawned), rejected with feedback, or superseded by a later proposal. ' +
+      'Use this when orchy_plan returned without a decision — never re-propose to find out, ' +
+      'since that replaces the plan the user is currently reading.',
+    inputSchema: {
+      type: 'object',
+      properties: { plan_id: { type: 'string' } },
+      required: ['plan_id'],
+    },
+    route: '/plan_status',
   },
   {
     name: 'orchy_spawn',

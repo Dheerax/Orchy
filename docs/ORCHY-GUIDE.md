@@ -32,6 +32,13 @@ than abandoned. Revise it to address what they said and propose again. Do not
 spawn anything in the meantime, and do not re-propose the same shape with
 different wording.
 
+If it comes back `proposed`, nothing is wrong: the user is still reading. Call
+`orchy_plan_status` to check, or simply stop and let them come back to you — the
+plan is saved, it survives closing the window, and its agents spawn on approval
+whether or not you are still connected. Proposing again is the one thing not to
+do: a new plan supersedes the one on their screen, so a proposal loop means they
+can never finish deciding.
+
 ## 0b. Start from a known shape
 
 Unsure how to split the work? Call `orchy_templates`. It returns decompositions

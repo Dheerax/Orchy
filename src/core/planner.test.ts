@@ -1,4 +1,7 @@
 /** Run with:  node out/core/planner.test.js */
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { Planner } from './planner';
 import { PlannedAgent } from './types';
 
@@ -154,6 +157,52 @@ void (async (): Promise<void> => {
     (await planner.awaitDecision(already.id, 5000))?.status,
     'approved'
   );
+
+  console.log('\nliving with a pending plan');
+
+  const dupes = new Planner();
+  const first = dupes.propose('Same', [agent()]);
+  const again = dupes.propose('Same', [agent()]);
+  check('re-proposing an identical plan reuses it', again.id, first.id);
+  check('so the user is never asked twice', dupes.pending().length, 1);
+
+  const revised = dupes.propose('Different', [agent({ role: 'z' })]);
+  check('a revised plan supersedes the old one', dupes.get(first.id)?.status, 'superseded');
+  check('and only the revision is pending', dupes.pending().map((p) => p.id), [revised.id]);
+
+  const released = new Planner();
+  const shelved = released.propose('One', [agent()]);
+  const blocked = released.awaitDecision(shelved.id, 5000);
+  released.propose('Two', [agent({ role: 'z' })]);
+  check('superseding releases a blocked caller', (await blocked)?.status, 'superseded');
+
+  const once = new Planner();
+  const claimed = once.propose('Run once', [agent()]);
+  ok('the first caller may run the plan', once.markRan(claimed.id));
+  ok('the second may not', !once.markRan(claimed.id));
+  ok('an unknown plan is not the planner to guard', once.markRan('nope'));
+
+  const waiting = new Planner();
+  const held = waiting.propose('Held', [agent()]);
+  ok('nothing waits on a plan nobody awaited', !waiting.hasWaiter(held.id));
+  const call = waiting.awaitDecision(held.id, 60);
+  ok('a blocked call registers', waiting.hasWaiter(held.id));
+  await call;
+  ok('and deregisters when it times out', !waiting.hasWaiter(held.id));
+
+  // The reload case: a plan is minutes of work and the window can go away
+  // before the user decides. It has to come back, and approving it has to
+  // still spawn something.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orchy-plans-'));
+  const before = new Planner(dir);
+  const survivor = before.propose('Survives a reload', [agent()]);
+  const after = new Planner(dir);
+  check('a pending plan survives a new window', after.pending().map((p) => p.id), [survivor.id]);
+  check('with its agents intact', after.get(survivor.id)?.agents.length, 1);
+  ok('and nothing is waiting on it any more', !after.hasWaiter(survivor.id));
+  after.settle(survivor.id, 'approved');
+  check('approving it sticks', new Planner(dir).get(survivor.id)?.status, 'approved');
+  fs.rmSync(dir, { recursive: true, force: true });
 
   console.log(
     failures === 0 ? `\nPASS — ${checks} checks\n` : `\n${failures} of ${checks} FAILED\n`

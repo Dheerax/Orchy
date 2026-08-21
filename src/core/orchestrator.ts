@@ -246,6 +246,12 @@ export class Orchestrator extends EventEmitter {
    * describe its own shape without knowing ids in advance.
    */
   async runPlan(plan: Plan): Promise<Session[]> {
+    // Approval can reach here twice — from the call that was blocked on it and
+    // from the panel that settled it. Two pipelines' worth of worktrees is not
+    // something the user can easily undo.
+    if (!this.planner.markRan(plan.id)) {
+      return [];
+    }
     const created: Session[] = [];
     const idByIndex = new Map<number, string>();
 
