@@ -637,8 +637,14 @@ export class WorkspacePanel {
       return lanes[l]++;
     });
 
-    const NW = 150, NH = 52, GX = 62, GY = 14, PX = 12, PY = 26;
     const stages = Math.max(...layer) + 1;
+    // With one stage there is no ordering to show — a single row of boxes says
+    // nothing the cards below do not, so it is just noise above them.
+    if (stages < 2) {
+      return '';
+    }
+
+    const NW = 150, NH = 52, GX = 62, GY = 14, PX = 12, PY = 26;
     const widest = Math.max(...Object.values(lanes));
     const W = PX * 2 + stages * NW + (stages - 1) * GX;
     const H = PY + widest * (NH + GY) + 8;
