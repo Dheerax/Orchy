@@ -284,6 +284,24 @@ const TOOLS = [
     route: '/send',
   },
   {
+    name: 'orchy_set_model',
+    description:
+      'Move a running session onto a different model, from its next turn onward, keeping the ' +
+      'context it has already built. Work is not uniform — start a session on something cheap ' +
+      'for scaffolding and move it up for the part that needs real reasoning, or move a ' +
+      'struggling session up rather than forking it. Model is provider/model, e.g. ' +
+      'opencode/ling-3.0-flash-free.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
+        model: { type: 'string', description: 'provider/model' },
+      },
+      required: ['session_id', 'model'],
+    },
+    route: '/set_model',
+  },
+  {
     name: 'orchy_relay',
     description:
       'Ask one agent a question on behalf of another, and record the exchange. Use this when ' +

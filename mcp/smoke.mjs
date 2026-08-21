@@ -84,6 +84,7 @@ check('all tools are listed', names, [
   'orchy_plan',
   'orchy_relay',
   'orchy_send',
+  'orchy_set_model',
   'orchy_spawn',
   'orchy_status',
   'orchy_templates',

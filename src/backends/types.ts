@@ -92,6 +92,15 @@ export interface AgentBackend {
    */
   transcript?(handle: BackendHandle): Promise<TranscriptEntry[]>;
 
+  /**
+   * Switch the model mid-session, from the next turn onward.
+   *
+   * Work is not uniform: the same session can start on something cheap for
+   * scaffolding and be moved up for the part that actually needs reasoning,
+   * without losing the context it has already built.
+   */
+  setModel?(handle: BackendHandle, model: string): Promise<void>;
+
   /** Tokens and cost so far, summed from the transcript. */
   usage?(handle: BackendHandle): Promise<{ tokensUsed: number; costEstimate: number }>;
 

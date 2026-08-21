@@ -175,6 +175,20 @@ conflict — that is git telling you the decomposition in step 1 was wrong.
 Agents are instructed to commit their own work. If a merge complains about
 uncommitted changes, the agent stopped early; send it back rather than forcing.
 
+## 8b. Match the model to the work
+
+Every agent takes a `model` at spawn, and `orchy_set_model` moves a running one
+onto a different model from its next turn — keeping the context it has already
+built.
+
+Scaffolding, boilerplate, docs and mechanical edits do not need your best model.
+Interface design, tricky logic and debugging do. Spending the same on both is
+the most common way a parallel pipeline gets expensive for no benefit.
+
+When a session is struggling, moving it up a model is usually better than forking
+it: it keeps everything it has learned about the codebase and only changes who is
+doing the thinking.
+
 ## 9. When an agent goes wrong, fork it
 
 Most of what a stuck agent did is usually fine. `orchy_fork` starts a new session

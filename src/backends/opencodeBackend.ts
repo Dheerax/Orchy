@@ -292,6 +292,16 @@ export class OpenCodeBackend implements AgentBackend {
     return { tokensUsed, costEstimate };
   }
 
+  async setModel(handle: BackendHandle, model: string): Promise<void> {
+    const parsed = parseModel(model);
+    if (!parsed) {
+      throw new Error(
+        `Model '${model}' is not in provider/model form, e.g. opencode/ling-3.0-flash-free.`
+      );
+    }
+    await this.client.updateSession(handle.id, { model: parsed });
+  }
+
   /**
    * Ask the session whether it is still working.
    *

@@ -211,6 +211,10 @@ export class SessionRegistry extends EventEmitter {
         break;
       }
 
+      case 'model':
+        session.backend = { ...session.backend, model: event.model };
+        break;
+
       case 'merged':
       case 'tool':
       case 'message':

@@ -257,6 +257,13 @@ export class DaemonServer {
         return summarize(session);
       }
 
+      case '/set_model':
+        await this.orchestrator.setModel(
+          String(body.session_id ?? ''),
+          String(body.model ?? '')
+        );
+        return { ok: true };
+
       case '/relay':
         await this.orchestrator.relay(
           String(body.from ?? ''),
@@ -391,6 +398,8 @@ function summarize(session: ReturnType<SessionRegistry['all']>[number]): unknown
       verified: d.verified,
       detail: d.detail,
     })),
+    model: session.backend.model,
+    tokens: session.budget.tokensUsed,
     spend: session.budget.costEstimate,
     error: session.lastError,
   };

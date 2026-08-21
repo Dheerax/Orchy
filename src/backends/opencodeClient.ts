@@ -85,6 +85,14 @@ export class OpenCodeClient {
     return wrapped.data;
   }
 
+  /** Change the model a session uses from its next turn onward. */
+  async updateSession(
+    sessionId: string,
+    updates: { model?: { id: string; providerID: string }; agent?: string }
+  ): Promise<void> {
+    await this.req('PATCH', `/api/session/${sessionId}`, updates);
+  }
+
   async prompt(sessionId: string, text: string): Promise<void> {
     await this.req('POST', `/api/session/${sessionId}/prompt`, { prompt: { text } });
   }

@@ -750,6 +750,19 @@ export class Orchestrator extends EventEmitter {
     this.emit('relayed', { from, to });
   }
 
+  /** Move a running session onto a different model, keeping its context. */
+  async setModel(id: string, model: string): Promise<void> {
+    const handle = this.handles.get(id);
+    if (!handle) {
+      throw new Error(`Session '${id}' is not connected in this window.`);
+    }
+    if (!this.backend.setModel) {
+      throw new Error(`${this.backend.id} cannot change model mid-session.`);
+    }
+    await this.backend.setModel(handle, model);
+    this.registry.record({ type: 'model', session: id, model });
+  }
+
   async send(id: string, text: string): Promise<void> {
     const handle = this.handles.get(id);
     if (!handle) {
