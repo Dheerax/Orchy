@@ -215,6 +215,11 @@ export class OpenCodeBackend implements AgentBackend {
         // --replay-limit is rejected outright unless --mini is also present
         // ("Error: --replay-limit requires --mini"), which kills the terminal
         // the instant it opens. The two travel together or not at all.
+        // Quietest level available. The mini renderer can otherwise leak
+        // [Reconciler] tracing straight into the pane, which buries the
+        // conversation the pane exists to show.
+        '--log-level',
+        'ERROR',
         ...(this.options.mini
           ? ['--mini', '--replay-limit', String(this.options.replayLimit ?? 200)]
           : []),

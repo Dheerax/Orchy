@@ -125,7 +125,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('orchy.showGraph', () => GraphPanel.show(registry)),
+    vscode.commands.registerCommand('orchy.showGraph', () => GraphPanel.show(registry, worktrees)),
 
     vscode.commands.registerCommand('orchy.focusSession', (arg?: unknown) => {
       const id = idOf(arg);
@@ -366,7 +366,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         groups: [{ size: 0.5 }, { size: 0.5 }],
       });
       await vscode.commands.executeCommand('workbench.view.extension.orchy');
-      GraphPanel.show(registry);
+      GraphPanel.show(registry, worktrees);
       void vscode.window.showInformationMessage(
         'Orchy: layout ready. Agent terminals fill the editor columns; the topology panel is beside them.'
       );

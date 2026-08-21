@@ -1,6 +1,8 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { SessionRegistry } from '../core/sessionRegistry';
 import { OrchyEvent, Session } from '../core/types';
+import { WorktreeManager } from '../core/worktreeManager';
 
 interface GraphNode {
   id: string;
@@ -8,6 +10,8 @@ interface GraphNode {
   role: string;
   status: string;
   detail: string;
+  branch?: string;
+  changes: { path: string; status: string }[];
 }
 
 interface GraphSnapshot {
@@ -34,16 +38,19 @@ export class GraphPanel {
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
-    private readonly registry: SessionRegistry
+    private readonly registry: SessionRegistry,
+    private readonly worktrees: WorktreeManager
   ) {
     this.panel.webview.html = this.html();
 
     this.panel.webview.onDidReceiveMessage(
-      (msg: { type: string; id?: string }) => {
+      (msg: { type: string; id?: string; file?: string }) => {
         if (msg.type === 'ready') {
           this.push();
         } else if (msg.type === 'focus' && msg.id) {
           void vscode.commands.executeCommand('orchy.focusSession', msg.id);
+        } else if (msg.type === 'diff' && msg.id && msg.file) {
+          void this.openDiff(msg.id, msg.file);
         }
       },
       undefined,
@@ -90,7 +97,32 @@ export class GraphPanel {
     }
   };
 
-  static show(registry: SessionRegistry): void {
+  /**
+   * Diff an agent's version of a file against the one on the base checkout.
+   *
+   * Rendered by VS Code's real diff editor rather than anything drawn in the
+   * webview: a sandboxed iframe cannot come close, and this is precisely the
+   * work the editor already does better than we could.
+   */
+  private async openDiff(sessionId: string, file: string): Promise<void> {
+    const session = this.registry.get(sessionId);
+    if (!session?.worktree) {
+      return;
+    }
+    const agentSide = vscode.Uri.file(path.join(session.worktree.path, file));
+    const baseSide = vscode.Uri.file(path.join(this.worktrees.root, file));
+    const title = `${file} — main ↔ ${session.id}`;
+    try {
+      await vscode.commands.executeCommand('vscode.diff', baseSide, agentSide, title, {
+        preview: true,
+      });
+    } catch {
+      // New file with nothing to compare against: just open what the agent wrote.
+      await vscode.window.showTextDocument(agentSide, { preview: true });
+    }
+  }
+
+  static show(registry: SessionRegistry, worktrees: WorktreeManager): void {
     if (GraphPanel.current) {
       GraphPanel.current.panel.reveal(undefined, true);
       return;
@@ -101,7 +133,7 @@ export class GraphPanel {
       { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
       { enableScripts: true, retainContextWhenHidden: false }
     );
-    GraphPanel.current = new GraphPanel(panel, registry);
+    GraphPanel.current = new GraphPanel(panel, registry, worktrees);
   }
 
   static refreshIfOpen(): void {
@@ -117,12 +149,27 @@ export class GraphPanel {
         role: s.role,
         status: s.status,
         detail: this.detail(s),
+        branch: s.worktree?.branch,
+        changes: this.changesOf(s),
       })),
       edges: this.recentMessages.filter(
         (m) => sessions.some((s) => s.id === m.from) && sessions.some((s) => s.id === m.to)
       ),
       blocked: this.registry.needingAttention().length,
     };
+  }
+
+  /** Uncommitted work in this agent's worktree. Empty if it has written nothing. */
+  private changesOf(session: Session): { path: string; status: string }[] {
+    if (!session.worktree) {
+      return [];
+    }
+    try {
+      return this.worktrees.changedFiles(session.worktree.path).slice(0, 25);
+    } catch {
+      // Worktree removed out from under us — the node still renders.
+      return [];
+    }
   }
 
   private detail(session: Session): string {
@@ -219,6 +266,19 @@ export class GraphPanel {
               color:var(--muted); margin:0 0 8px; font-weight:600; }
   .edge { color:var(--muted); font-size:12px; padding:3px 0; }
   .edge b { color: var(--fg); font-weight:600; }
+  .branch { font-family: var(--vscode-editor-font-family); font-size:11px;
+            color: var(--muted); margin-top:8px; }
+  .changes { margin-top:10px; border-top:1px solid var(--line); padding-top:8px; }
+  .changes h3 { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
+                color:var(--muted); margin:0 0 6px; font-weight:600; }
+  .file { display:flex; gap:8px; align-items:baseline; width:100%; text-align:left;
+          background:none; border:none; color:var(--fg); cursor:pointer;
+          font-family: var(--vscode-editor-font-family); font-size:11.5px;
+          padding:2px 4px; border-radius:4px; }
+  .file:hover { background: var(--vscode-list-hoverBackground); }
+  .file .st { color: var(--unverified); width:16px; flex:0 0 auto; }
+  .file .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .nochange { color:var(--muted); font-size:11.5px; font-style:italic; }
   .empty { color:var(--muted); max-width:520px; line-height:1.6; }
   .empty code { background: var(--vscode-textCodeBlock-background); padding:1px 5px; border-radius:3px; }
 </style>
@@ -259,6 +319,16 @@ export class GraphPanel {
           '<span class="role">' + esc(n.role) + '</span></div>' +
         '<div class="label">' + esc(n.label) + '</div>' +
         '<div class="detail">' + esc(n.detail) + '</div>' +
+        (n.branch ? '<div class="branch">' + esc(n.branch) + '</div>' : '') +
+        '<div class="changes"><h3>Changes</h3>' +
+          (n.changes.length
+            ? n.changes.map(c =>
+                '<button class="file" data-session="' + esc(n.id) + '" data-file="' + esc(c.path) + '">' +
+                  '<span class="st">' + esc(c.status) + '</span>' +
+                  '<span class="nm">' + esc(c.path) + '</span>' +
+                '</button>').join('')
+            : '<div class="nochange">nothing written yet</div>') +
+        '</div>' +
         '<div class="status">' + esc(n.status.replace('_', ' ')) + '</div>' +
       '</div>').join('');
 
@@ -274,6 +344,13 @@ export class GraphPanel {
       const focus = () => vscodeApi.postMessage({ type: 'focus', id: el.dataset.id });
       el.addEventListener('click', focus);
       el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); focus(); } });
+    }
+    for (const el of root.querySelectorAll('.file')) {
+      el.addEventListener('click', e => {
+        // Opening a diff must not also focus the agent's terminal.
+        e.stopPropagation();
+        vscodeApi.postMessage({ type: 'diff', id: el.dataset.session, file: el.dataset.file });
+      });
     }
   }
 

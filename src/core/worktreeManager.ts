@@ -129,6 +129,12 @@ export class WorktreeManager {
       if (!fs.existsSync(from)) {
         continue;
       }
+      // Git already delivers tracked files. Copying over one anyway leaves the
+      // worktree dirty before the agent has touched anything — usually via line
+      // endings — which then blocks cleanup for no reason.
+      if (this.isTracked(entry)) {
+        continue;
+      }
       const to = path.join(worktreePath, entry);
       fs.mkdirSync(path.dirname(to), { recursive: true });
       fs.cpSync(from, to, { recursive: true });
@@ -156,6 +162,26 @@ export class WorktreeManager {
       }
     }
     return copied;
+  }
+
+  isTracked(relativePath: string): boolean {
+    try {
+      this.git(['ls-files', '--error-unmatch', relativePath]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Files an agent has changed in its worktree, relative to the worktree root. */
+  changedFiles(worktreePath: string): { path: string; status: string }[] {
+    return this.dirtyFiles(worktreePath)
+      .map((line) => {
+        const status = line.slice(0, 2).trim() || '?';
+        const file = line.slice(2).trim().replace(/^"|"$/g, '');
+        return { path: file, status };
+      })
+      .filter((c) => c.path.length > 0);
   }
 
   branchExists(branch: string): boolean {
