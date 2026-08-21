@@ -112,7 +112,12 @@ export class WorkspacePanel {
       'orchy.workspace',
       'Orchy',
       { viewColumn: vscode.ViewColumn.Active, preserveFocus: true },
-      { enableScripts: true, retainContextWhenHidden: false }
+      // Keep the DOM when the panel is hidden. Without this the webview is torn
+      // down and rebuilt every time another tab covers it — and an orchestrator
+      // that opens its own tool output over the panel could rebuild it faster
+      // than it could finish loading, which is a panel that never draws.
+      // It also keeps scroll position, focus and the diagram's pan/zoom.
+      { enableScripts: true, retainContextWhenHidden: true }
     );
     WorkspacePanel.current = new WorkspacePanel(
       panel,
@@ -271,9 +276,12 @@ export class WorkspacePanel {
   }
 
   private async push(): Promise<void> {
-    if (!this.panel.visible) {
-      return;
-    }
+    // Posting to a hidden panel is cheap and harmless; refusing to was not.
+    // `retainContextWhenHidden` is off, so a hidden webview is reloaded when it
+    // comes back and re-asks for state — but a plan arriving while it was
+    // hidden had nowhere to go, and whether the reload or the reveal won the
+    // race decided whether the user saw anything at all.
+    const hidden = !this.panel.visible;
     const live = this.registry.all().filter((s) => s.status !== 'archived');
     const pages = Math.max(1, Math.ceil(live.length / this.perPage));
     this.page = Math.min(this.page, pages - 1);
@@ -290,7 +298,7 @@ export class WorkspacePanel {
         detail: this.detail(session),
         spend: session.budget.costEstimate,
         changes: this.changesOf(session),
-        transcript: await this.transcriptOf(session),
+        transcript: hidden ? [] : await this.transcriptOf(session),
       });
     }
 
@@ -565,6 +573,28 @@ export class WorkspacePanel {
   const pager = document.getElementById('pager');
   let scrollMemory = {};
 
+  // The handshake, first thing and before any other wiring.
+  //
+  // A snapshot posted while this document was still loading is dropped by the
+  // webview, and the old code asked for state exactly once — at the very bottom
+  // of the script, where any exception above it meant the panel sat empty
+  // forever with no way back. Ask immediately, and keep asking until something
+  // arrives.
+  let gotSnapshot = false;
+  let asks = 0;
+  window.addEventListener('message', e => {
+    if (e.data && e.data.type === 'snapshot') {
+      gotSnapshot = true;
+      render(e.data.data);
+    }
+  });
+  function ask() {
+    if (gotSnapshot || asks++ > 6) return;
+    api.postMessage({ type: 'ready' });
+    setTimeout(ask, 500);
+  }
+  ask();
+
   const esc = s => String(s).replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -767,6 +797,17 @@ export class WorkspacePanel {
   }
 
   function render(d) {
+    // A thrown error used to leave the panel empty and indistinguishable from
+    // "nothing is running", which is the worst thing a status surface can do.
+    try {
+      paint(d);
+    } catch (err) {
+      grid.innerHTML = '<p class="empty">Orchy could not draw this view.<br><br><code>' +
+        esc((err && err.message) || String(err)) + '</code></p>';
+    }
+  }
+
+  function paint(d) {
     renderPager(d);
 
     if (d.plan) {
@@ -880,11 +921,6 @@ export class WorkspacePanel {
     if (e.target.closest('.arch')) { view = { k: 1, x: 0, y: 0 }; applyView(); }
   });
 
-  window.addEventListener('message', e => {
-    if (e.data && e.data.type === 'snapshot') render(e.data.data);
-  });
-
-  api.postMessage({ type: 'ready' });
 </script>
 </body>
 </html>`;

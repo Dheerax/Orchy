@@ -206,9 +206,13 @@ export class DaemonServer {
         );
         this.onPlanProposed?.(plan);
 
+        // Floor of a minute, whatever was asked for. A one-second wait returns
+        // "still proposed", which reads to an orchestrator as "try again" — and
+        // a proposal loop replaces the plan the user is mid-way through reading,
+        // over and over, so they can never finish deciding.
         const decided = await this.orchestrator.planner.awaitDecision(
           plan.id,
-          Math.min(Math.max(Number(body.timeout_seconds ?? 600), 1), 1800) * 1000
+          Math.min(Math.max(Number(body.timeout_seconds ?? 600), 60), 1800) * 1000
         );
         if (decided?.status === 'approved') {
           const sessions = await this.orchestrator.runPlan(decided);
