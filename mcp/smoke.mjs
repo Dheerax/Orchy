@@ -83,6 +83,7 @@ check('all tools are listed', names, [
   'orchy_spawn',
   'orchy_status',
   'orchy_verify',
+  'orchy_wait',
 ]);
 
 const spawnTool = (list?.result?.tools ?? []).find((t) => t.name === 'orchy_spawn');

@@ -151,6 +151,30 @@ const TOOLS = [
     route: '/status',
   },
   {
+    name: 'orchy_wait',
+    description:
+      'Block until a session needs you, then return. Use this instead of sleeping and ' +
+      'polling: it returns the moment an agent finishes, gets blocked on a permission ' +
+      'prompt, fails, or finishes unverified — not N seconds later. Returns immediately ' +
+      'if something already needs attention. Poll loops with sleep are the wrong shape ' +
+      'here and cost a turn every time.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Sessions to watch. Omit to watch every session.',
+        },
+        timeout_seconds: {
+          type: 'number',
+          description: 'Give up after this long and report current state. Default 300, max 600.',
+        },
+      },
+    },
+    route: '/wait',
+  },
+  {
     name: 'orchy_send',
     description: 'Send a follow-up prompt to a running session.',
     inputSchema: {

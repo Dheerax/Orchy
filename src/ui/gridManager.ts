@@ -3,13 +3,7 @@ import { AgentBackend, BackendHandle } from '../backends/types';
 import { SessionRegistry } from '../core/sessionRegistry';
 import { NEEDS_ATTENTION, Session } from '../core/types';
 
-/** Grid columns sessions are placed into, in fill order. */
-const SLOT_COLUMNS = [
-  vscode.ViewColumn.One,
-  vscode.ViewColumn.Two,
-  vscode.ViewColumn.Three,
-  vscode.ViewColumn.Four,
-];
+const MAX_SLOTS = 4;
 
 const STATUS_COLORS: Record<string, string> = {
   running: 'terminal.ansiBlue',
@@ -32,6 +26,8 @@ const STATUS_COLORS: Record<string, string> = {
  */
 export class GridManager implements vscode.Disposable {
   private terminals = new Map<string, vscode.Terminal>();
+  /** Editor column the agent grid starts at, fixed on first placement. */
+  private baseColumn: number | undefined;
   /** Session ids whose terminal the user focused recently, for eviction safety. */
   private lastFocused = new Map<string, number>();
   private disposables: vscode.Disposable[] = [];
@@ -54,7 +50,24 @@ export class GridManager implements vscode.Disposable {
 
   private get maxSlots(): number {
     const configured = vscode.workspace.getConfiguration('orchy').get<number>('visibleSlots', 2);
-    return Math.min(Math.max(configured, 1), SLOT_COLUMNS.length);
+    return Math.min(Math.max(configured, 1), MAX_SLOTS);
+  }
+
+  /**
+   * Which editor column a slot maps to.
+   *
+   * Anchored beside whatever the user already has open rather than at column
+   * one, because targeting a column that already holds their files just adds a
+   * background tab there — the terminal exists, is never seen, and looks like
+   * nothing happened. The anchor is fixed on first placement so the grid stays
+   * put as agents come and go.
+   */
+  private targetColumn(slot: number): vscode.ViewColumn {
+    if (this.baseColumn === undefined) {
+      const existingGroups = vscode.window.tabGroups.all.length;
+      this.baseColumn = Math.min(existingGroups + 1, MAX_SLOTS + 4);
+    }
+    return Math.min(this.baseColumn + slot, 9) as vscode.ViewColumn;
   }
 
   private sessionIdOf(terminal: vscode.Terminal | undefined): string | undefined {
@@ -95,7 +108,7 @@ export class GridManager implements vscode.Disposable {
 
     const terminal = vscode.window.createTerminal({
       name: `${session.id} · ${session.role}`,
-      location: { viewColumn: SLOT_COLUMNS[slot], preserveFocus: true },
+      location: { viewColumn: this.targetColumn(slot), preserveFocus: true },
       cwd: session.worktree?.path,
       shellPath: attach.command,
       shellArgs: attach.args,
@@ -106,6 +119,10 @@ export class GridManager implements vscode.Disposable {
       color: new vscode.ThemeColor(STATUS_COLORS[session.status] ?? 'terminal.ansiBlue'),
       isTransient: true,
     });
+
+    // Creating a terminal does not surface it. Without this it can sit as a
+    // background tab in its group, indistinguishable from never having opened.
+    terminal.show(true);
 
     this.terminals.set(session.id, terminal);
     this.registry.record({
@@ -184,6 +201,10 @@ export class GridManager implements vscode.Disposable {
       return;
     }
     this.terminals.delete(id);
+    if (this.terminals.size === 0) {
+      // Grid is empty; re-anchor next time against the layout as it is then.
+      this.baseColumn = undefined;
+    }
     const session = this.registry.get(id);
     if (!session) {
       return;

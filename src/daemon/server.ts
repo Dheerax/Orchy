@@ -4,6 +4,7 @@ import * as http from 'http';
 import * as path from 'path';
 import { Orchestrator, SpawnRequest } from '../core/orchestrator';
 import { SessionRegistry } from '../core/sessionRegistry';
+import { NEEDS_ATTENTION } from '../core/types';
 
 interface Handshake {
   port: number;
@@ -135,6 +136,12 @@ export class DaemonServer {
         return summarize(session);
       }
 
+      case '/wait':
+        return this.wait(
+          Array.isArray(body.session_ids) ? body.session_ids.map(String) : undefined,
+          typeof body.timeout_seconds === 'number' ? body.timeout_seconds : 300
+        );
+
       case '/interrupt':
         await this.orchestrator.interrupt(String(body.session_id ?? ''), String(body.reason ?? ''));
         return { ok: true };
@@ -156,6 +163,53 @@ export class DaemonServer {
       default:
         throw new Error(`unknown route ${route}`);
     }
+  }
+
+  /**
+   * Block until a watched session needs something, then return.
+   *
+   * The alternative is an orchestrator burning turns on sleep-then-poll, which
+   * costs tokens, adds latency in both directions, and still misses the moment
+   * an agent actually became blocked. The daemon already sees every state change,
+   * so it should be the thing that waits.
+   */
+  private wait(sessionIds: string[] | undefined, timeoutSeconds: number): Promise<unknown> {
+    const watched = (): ReturnType<SessionRegistry['all']> =>
+      this.registry.all().filter((s) => !sessionIds || sessionIds.includes(s.id));
+
+    const settled = (): ReturnType<SessionRegistry['all']> =>
+      watched().filter(
+        (s) =>
+          NEEDS_ATTENTION.has(s.status) ||
+          s.status === 'complete' ||
+          s.status === 'archived'
+      );
+
+    const ready = settled();
+    if (ready.length > 0) {
+      return Promise.resolve({ reason: 'ready', sessions: ready.map(summarize) });
+    }
+
+    return new Promise((resolve) => {
+      const finish = (reason: string): void => {
+        clearTimeout(timer);
+        this.registry.off('changed', onChanged);
+        resolve({
+          reason,
+          sessions: (reason === 'timeout' ? watched() : settled()).map(summarize),
+        });
+      };
+      const onChanged = (): void => {
+        if (settled().length > 0) {
+          finish('ready');
+        }
+      };
+      const timer = setTimeout(
+        () => finish('timeout'),
+        Math.min(Math.max(timeoutSeconds, 1), 600) * 1000
+      );
+      this.registry.on('changed', onChanged);
+    });
   }
 
   private knownIds(): string {
