@@ -155,6 +155,14 @@ export interface Plan {
   summary: string;
   agents: PlannedAgent[];
   status: 'proposed' | 'approved' | 'rejected';
+  /**
+   * What the user wants changed.
+   *
+   * A plain rejection tells the orchestrator only that it was wrong. Feedback
+   * lets it revise rather than guess, which is the difference between one more
+   * round and several.
+   */
+  feedback?: string;
   /** Problems found before the plan may run, e.g. a need nobody provides. */
   warnings: string[];
   createdAt: string;

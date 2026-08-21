@@ -47,8 +47,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // handles, whatever the log says a previous window was doing.
   registry.reconcileForFreshWindow();
 
-  const decidePlan = (id: string, decision: 'approved' | 'rejected'): void => {
-    planner.settle(id, decision);
+  const decidePlan = (id: string, decision: 'approved' | 'rejected', feedback?: string): void => {
+    planner.settle(id, decision, feedback);
   };
 
   const transcripts = new TranscriptDocumentProvider(registry, backend, (id) =>

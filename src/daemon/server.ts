@@ -223,8 +223,11 @@ export class DaemonServer {
           plan_id: plan.id,
           status: decided?.status ?? 'proposed',
           warnings: plan.warnings,
-          note:
-            decided?.status === 'rejected'
+          feedback: decided?.feedback,
+          note: decided?.feedback
+            ? 'The user wants changes. Revise the plan to address the feedback and propose ' +
+              'again with orchy_plan — do not spawn anything in the meantime.'
+            : decided?.status === 'rejected'
               ? 'The user rejected this plan. Ask what to change before proposing again.'
               : 'Still awaiting a decision. The plan is shown in the Orchy panel.',
         };

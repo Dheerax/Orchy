@@ -50,7 +50,11 @@ export class WorkspacePanel {
     private readonly worktrees: WorktreeManager,
     private readonly backend: AgentBackend,
     private readonly handleOf: (id: string) => BackendHandle | undefined,
-    private readonly onPlanDecision?: (id: string, decision: 'approved' | 'rejected') => void
+    private readonly onPlanDecision?: (
+      id: string,
+      decision: 'approved' | 'rejected',
+      feedback?: string
+    ) => void
   ) {
     this.panel.webview.html = this.html();
 
@@ -94,7 +98,11 @@ export class WorkspacePanel {
     worktrees: WorktreeManager,
     backend: AgentBackend,
     handleOf: (id: string) => BackendHandle | undefined,
-    onPlanDecision?: (id: string, decision: 'approved' | 'rejected') => void
+    onPlanDecision?: (
+      id: string,
+      decision: 'approved' | 'rejected',
+      feedback?: string
+    ) => void
   ): void {
     if (WorkspacePanel.current) {
       WorkspacePanel.current.panel.reveal(undefined, true);
@@ -193,6 +201,25 @@ export class WorkspacePanel {
           );
           this.plan = undefined;
           await this.push();
+        }
+        break;
+      case 'revisePlan':
+        if (this.plan) {
+          // Sent back rather than refused: the orchestrator gets to revise
+          // instead of guessing what was wrong with the shape it proposed.
+          const feedback = await vscode.window.showInputBox({
+            title: 'What should change about this plan?',
+            prompt:
+              'Goes back to the orchestrator, which will revise and propose again. ' +
+              'e.g. "run the three validators in parallel" or "use a cheaper model for docs".',
+            placeHolder: 'Describe the change you want',
+            ignoreFocusOut: true,
+          });
+          if (feedback && this.plan) {
+            this.onPlanDecision?.(this.plan.id, 'rejected', feedback);
+            this.plan = undefined;
+            await this.push();
+          }
         }
         break;
       case 'purge':
@@ -481,6 +508,19 @@ export class WorkspacePanel {
   #plan .agent .meta { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
   #plan .meta .sym { color: var(--done); }
   #plan .meta .need { color: var(--running); }
+  /* The architecture, drawn. A list of agents is not a shape, and the shape is
+     the thing being approved. */
+  #plan .arch { border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+                margin-bottom: 10px; overflow-x: auto; background: var(--bg); }
+  #plan .arch svg { display: block; }
+  #plan .arch .stagelabel { font-size: 9.5px; fill: var(--muted); }
+  #plan .arch .edge { fill: none; stroke: var(--muted); stroke-width: 1.3; opacity: .6; }
+  #plan .arch rect { fill: var(--card); stroke: var(--line); stroke-width: 1.4; rx: 7; }
+  #plan .arch .r { font-size: 11px; font-weight: 600; fill: var(--fg); }
+  #plan .arch .m { font-size: 9px; fill: var(--running); font-family: var(--mono); }
+  #plan .arch .io { font-size: 9px; fill: var(--muted); font-family: var(--mono); }
+  #plan .arch .par { fill: var(--done); font-size: 9.5px; }
+
   #plan .actions { display: flex; gap: 8px; margin-top: 12px; }
   #plan .actions button { border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
                           font-size: 12px; padding: 5px 14px; background: none; color: var(--fg); }
@@ -575,6 +615,65 @@ export class WorkspacePanel {
       '<button data-page="' + (d.page + 1) + '"' + (d.page >= d.pages - 1 ? ' disabled' : '') + '>&rsaquo;</button>';
   }
 
+  // Lay agents out by dependency depth, so a column is a stage: everything in
+  // one could run at the same time. That makes the width of the widest stage —
+  // the actual parallelism being bought — visible at a glance.
+  function archSvg(agents) {
+    const layer = [];
+    const depth = (i, seen) => {
+      if (layer[i] !== undefined) return layer[i];
+      if (seen.has(i)) return 0;
+      seen.add(i);
+      const deps = (agents[i].dependsOn || []).filter(d => agents[d]);
+      layer[i] = deps.length ? Math.max(...deps.map(d => depth(d, seen))) + 1 : 0;
+      return layer[i];
+    };
+    agents.forEach((_, i) => depth(i, new Set()));
+
+    const lanes = {};
+    const lane = agents.map((_, i) => {
+      const l = layer[i];
+      lanes[l] = (lanes[l] || 0);
+      return lanes[l]++;
+    });
+
+    const NW = 150, NH = 52, GX = 62, GY = 14, PX = 12, PY = 26;
+    const stages = Math.max(...layer) + 1;
+    const widest = Math.max(...Object.values(lanes));
+    const W = PX * 2 + stages * NW + (stages - 1) * GX;
+    const H = PY + widest * (NH + GY) + 8;
+    const x = i => PX + layer[i] * (NW + GX);
+    const y = i => PY + lane[i] * (NH + GY);
+
+    let svg = '<svg width="' + W + '" height="' + H + '">';
+    for (let l = 0; l < stages; l++) {
+      const n = lanes[l] || 0;
+      svg += '<text class="stagelabel" x="' + (PX + l * (NW + GX)) + '" y="14">stage ' + (l + 1) +
+        (n > 1 ? '</text><tspan class="par"> · ' + n + ' in parallel</tspan>' : '</text>');
+    }
+    agents.forEach((a, i) => {
+      for (const d of a.dependsOn || []) {
+        if (!agents[d]) continue;
+        const x1 = x(d) + NW, y1 = y(d) + NH / 2, x2 = x(i), y2 = y(i) + NH / 2;
+        const mid = (x1 + x2) / 2;
+        svg += '<path class="edge" d="M' + x1 + ' ' + y1 + ' C' + mid + ' ' + y1 + ',' +
+               mid + ' ' + y2 + ',' + x2 + ' ' + y2 + '"/>';
+      }
+    });
+    agents.forEach((a, i) => {
+      const provides = a.provides.map(v => v.symbol).join(', ');
+      const needs = a.needs.join(', ');
+      svg += '<g><rect x="' + x(i) + '" y="' + y(i) + '" width="' + NW + '" height="' + NH + '"/>' +
+        '<text class="r" x="' + (x(i) + 10) + '" y="' + (y(i) + 16) + '">' + esc(a.role) + '</text>' +
+        '<text class="m" x="' + (x(i) + 10) + '" y="' + (y(i) + 29) + '">' +
+          esc(a.model || 'default model') + '</text>' +
+        '<text class="io" x="' + (x(i) + 10) + '" y="' + (y(i) + 42) + '">' +
+          esc((provides ? '→ ' + provides : '') + (needs ? '  ← ' + needs : '') || ' ') +
+        '</text></g>';
+    });
+    return '<div class="arch">' + svg + '</svg></div>';
+  }
+
   function planHtml(p) {
     const warns = p.warnings.map(w => '<div class="warn">' + esc(w) + '</div>').join('');
     const agents = p.agents.map(a => {
@@ -596,10 +695,12 @@ export class WorkspacePanel {
 
     return '<div id="plan"><h2>' + esc(p.summary) + '</h2>' +
       '<div class="sub">' + p.agents.length +
-      ' agent(s) proposed. Nothing runs until you approve.</div>' +
-      warns + agents +
+      ' agent(s) proposed. Nothing runs until you approve. ' +
+      'Request changes to send it back for revision.</div>' +
+      archSvg(p.agents) + warns + agents +
       '<div class="actions">' +
         '<button class="go" data-plan="approvePlan">Approve and run</button>' +
+        '<button data-plan="revisePlan">Request changes…</button>' +
         '<button class="no" data-plan="rejectPlan">Reject</button>' +
       '</div></div>';
   }

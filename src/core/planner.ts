@@ -157,12 +157,13 @@ export class Planner {
     return [...this.plans.values()].filter((p) => p.status === 'proposed');
   }
 
-  settle(id: string, status: 'approved' | 'rejected'): Plan | undefined {
+  settle(id: string, status: 'approved' | 'rejected', feedback?: string): Plan | undefined {
     const plan = this.plans.get(id);
     if (!plan || plan.status !== 'proposed') {
       return plan;
     }
     plan.status = status;
+    plan.feedback = feedback;
     for (const resolve of this.waiters.get(id) ?? []) {
       resolve(plan);
     }

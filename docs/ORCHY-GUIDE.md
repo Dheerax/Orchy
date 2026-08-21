@@ -22,6 +22,16 @@ warnings alongside it. Fix what it finds before proposing again.
 Do not spawn agents one at a time for a multi-agent job. The user then finds out
 what you decided only after it is already running, which is the wrong order.
 
+The plan is shown as a diagram — agents by stage, each with its model, what it
+provides and what it needs — so give every agent a `model` and fill in
+`provides`/`needs`. An agent with none of those renders as an empty box, and the
+user is approving a shape they cannot read.
+
+If the result comes back with `feedback`, the user wants the plan changed rather
+than abandoned. Revise it to address what they said and propose again. Do not
+spawn anything in the meantime, and do not re-propose the same shape with
+different wording.
+
 ## 0b. Start from a known shape
 
 Unsure how to split the work? Call `orchy_templates`. It returns decompositions
