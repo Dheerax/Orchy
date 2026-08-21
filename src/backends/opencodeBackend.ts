@@ -212,9 +212,12 @@ export class OpenCodeBackend implements AgentBackend {
         handle.id,
         '--dir',
         handle.directory,
-        ...(this.options.mini ? ['--mini'] : []),
-        '--replay-limit',
-        String(this.options.replayLimit ?? 200),
+        // --replay-limit is rejected outright unless --mini is also present
+        // ("Error: --replay-limit requires --mini"), which kills the terminal
+        // the instant it opens. The two travel together or not at all.
+        ...(this.options.mini
+          ? ['--mini', '--replay-limit', String(this.options.replayLimit ?? 200)]
+          : []),
       ],
     };
   }

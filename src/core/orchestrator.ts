@@ -6,7 +6,14 @@ import { Deliverable, DEFAULT_FORBIDDEN_COMMANDS, Session, TERMINAL_STATUSES } f
 import { WorktreeManager } from './worktreeManager';
 
 export interface SpawnRequest {
+  /** Free-text label used for the id and grouping. Not sent to the backend. */
   role: string;
+  /**
+   * Backend-native agent name (OpenCode's --agent). Only set this when the agent
+   * genuinely exists — passing an unknown name fails the spawn, and a role is
+   * just a label the user typed.
+   */
+  agent?: string;
   task: string;
   name?: string;
   deliverables?: Deliverable[];
@@ -93,7 +100,7 @@ export class Orchestrator extends EventEmitter {
         sessionId: id,
         task: this.decorateTask(req.task, deliverables, worktree?.path),
         directory,
-        agent: req.role,
+        agent: req.agent,
         model: req.model,
         autoApprove: req.autoApprove,
       });

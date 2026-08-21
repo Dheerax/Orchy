@@ -177,6 +177,7 @@ function toSpawnRequest(body: Record<string, unknown>): SpawnRequest {
   const rawDeliverables = Array.isArray(body.deliverables) ? body.deliverables : [];
   return {
     role: String(body.role ?? 'agent'),
+    agent: body.agent ? String(body.agent) : undefined,
     task: String(body.task ?? ''),
     name: body.name ? String(body.name) : undefined,
     model: body.model ? String(body.model) : undefined,

@@ -50,6 +50,25 @@ export class SessionRegistry extends EventEmitter {
     return [...this.sessions.values()];
   }
 
+  /**
+   * Bring replayed state in line with what this window can actually see.
+   *
+   * A new window owns no terminals and no backend handles, but the log may say
+   * sessions are visible in grid slots and still running. Left uncorrected, dead
+   * sessions hold slots hostage and new agents get pushed into empty columns
+   * further right.
+   */
+  reconcileForFreshWindow(): void {
+    for (const session of this.all()) {
+      if (session.surface.visible) {
+        this.record({ type: 'surface', session: session.id, visible: false });
+      }
+      if (session.status === 'running' || session.status === 'spawning') {
+        this.record({ type: 'status', session: session.id, status: 'detached' });
+      }
+    }
+  }
+
   /** Sessions a human needs to look at right now. Drives the sidebar badge. */
   needingAttention(): Session[] {
     return this.all().filter((s) => NEEDS_ATTENTION.has(s.status));
@@ -141,6 +160,12 @@ export class SessionRegistry extends EventEmitter {
       case 'archived':
         session.status = 'archived';
         session.surface = { visible: false };
+        break;
+
+      case 'purged':
+        // Hard delete. The event stays in the log as history, but the session
+        // stops existing as far as every surface is concerned.
+        this.sessions.delete(event.session);
         break;
 
       case 'tool':

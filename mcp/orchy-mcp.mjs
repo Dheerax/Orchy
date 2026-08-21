@@ -77,7 +77,18 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        role: { type: 'string', description: 'ui | backend | ml | docs | free text' },
+        role: {
+          type: 'string',
+          description:
+            'Short label for this agent, e.g. ui, backend, docs. Used for its id and grouping. ' +
+            'Free text — it is not a backend agent name.',
+        },
+        agent: {
+          type: 'string',
+          description:
+            'Backend-native agent name (OpenCode --agent). Only set this if the agent actually ' +
+            'exists; an unknown name fails the spawn. Usually omit it.',
+        },
         task: { type: 'string', description: 'What this agent should do.' },
         name: { type: 'string', description: 'Short human label.' },
         model: { type: 'string', description: 'provider/model, e.g. opencode/ling-3.0-flash-free' },

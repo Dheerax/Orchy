@@ -29,6 +29,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const orchestrator = new Orchestrator(registry, worktrees, backend, new DeliverableVerifier(), {
     baseBranch: config.get<string>('baseBranch', 'main'),
   });
+  // Before anything reads state: this window owns no terminals and no backend
+  // handles, whatever the log says a previous window was doing.
+  registry.reconcileForFreshWindow();
+
   const grid = new GridManager(registry, backend);
   const tree = new SessionTreeProvider(registry);
   const daemon = new DaemonServer(registry, orchestrator, orchyDir, root);
@@ -119,23 +123,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
 
     vscode.commands.registerCommand('orchy.spawn', async () => {
-      const role = await vscode.window.showQuickPick(
-        ['ui', 'backend', 'ml', 'docs', 'test', 'research'],
-        { placeHolder: 'Role for this agent' }
-      );
-      if (!role) {
-        return;
-      }
       const task = await vscode.window.showInputBox({
+        title: 'Spawn an agent',
         prompt: 'What should this agent do?',
-        placeHolder: 'Implement the settings page',
+        placeHolder: 'Build the settings page',
+        ignoreFocusOut: true,
       });
       if (!task) {
         return;
       }
       const deliverableSpec = await vscode.window.showInputBox({
-        prompt: 'Deliverables (comma-separated files, globs, or commands). Required to reach "complete".',
+        title: 'Deliverables (optional)',
+        prompt:
+          'Files, globs, or commands this agent must produce, comma-separated. ' +
+          'Leave blank to skip — the session then cannot be marked complete automatically.',
         placeHolder: 'src/Settings.tsx, npm test',
+        ignoreFocusOut: true,
       });
       const deliverables = (deliverableSpec ?? '')
         .split(',')
@@ -151,15 +154,76 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }));
 
       await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: `Orchy: spawning ${role}…` },
+        { location: vscode.ProgressLocation.Notification, title: 'Orchy: spawning agent…' },
         async () => {
           try {
-            await orchestrator.spawn({ role, task, deliverables });
+            await orchestrator.spawn({ role: 'agent', task, name: task.slice(0, 60), deliverables });
           } catch (err) {
             fail(err);
           }
         }
       );
+    }),
+
+    vscode.commands.registerCommand('orchy.purge', async (id?: string) => {
+      const target = id ?? (await pick('Remove which session from the list?'));
+      if (!target) {
+        return;
+      }
+      const session = registry.get(target);
+      const confirm = await vscode.window.showWarningMessage(
+        `Remove ${target} from Orchy?`,
+        {
+          modal: true,
+          detail:
+            `${session?.name ?? target}
+
+` +
+            `This removes it from the list permanently. Its git branch` +
+            `${session?.worktree ? ` (${session.worktree.branch})` : ''} is left alone, ` +
+            `so any work it did is still recoverable from git.`,
+        },
+        'Remove'
+      );
+      if (confirm !== 'Remove') {
+        return;
+      }
+      try {
+        if (session && session.status !== 'archived') {
+          await orchestrator.archive(target, { force: true });
+        }
+        grid.detach(target);
+      } catch {
+        // Worktree may already be gone; removal from the list still proceeds.
+      }
+      registry.record({ type: 'purged', session: target });
+    }),
+
+    vscode.commands.registerCommand('orchy.purgeAll', async () => {
+      const removable = registry.all();
+      if (removable.length === 0) {
+        void vscode.window.showInformationMessage('Orchy: nothing to clear.');
+        return;
+      }
+      const typed = await vscode.window.showInputBox({
+        title: `Clear all ${removable.length} session(s)?`,
+        prompt: "Type 'clear' to confirm. Git branches are left untouched.",
+        ignoreFocusOut: true,
+      });
+      if (typed !== 'clear') {
+        return;
+      }
+      for (const session of removable) {
+        try {
+          if (session.status !== 'archived') {
+            await orchestrator.archive(session.id, { force: true });
+          }
+          grid.detach(session.id);
+        } catch {
+          // Best effort — clearing the list must not be blockable by a stuck worktree.
+        }
+        registry.record({ type: 'purged', session: session.id });
+      }
     }),
 
     vscode.commands.registerCommand('orchy.verify', async (id?: string) => {
