@@ -24,7 +24,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const worktrees = new WorktreeManager(root);
   const registry = new SessionRegistry(new EventLog(orchyDir));
   const backend = new OpenCodeBackend(undefined, {
-    mini: config.get<boolean>('miniTui', false),
+    mini: config.get<boolean>('miniTui', true),
   });
   const orchestrator = new Orchestrator(registry, worktrees, backend, new DeliverableVerifier(), {
     baseBranch: config.get<string>('baseBranch', 'main'),
@@ -33,13 +33,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // handles, whatever the log says a previous window was doing.
   registry.reconcileForFreshWindow();
 
-  const grid = new GridManager(registry, backend);
+  const output = vscode.window.createOutputChannel('Orchy');
+  const grid = new GridManager(registry, backend, (message) => output.appendLine(message));
   const tree = new SessionTreeProvider(registry);
   const daemon = new DaemonServer(registry, orchestrator, orchyDir, root);
 
   context.subscriptions.push(grid, tree.register(), { dispose: () => daemon.dispose() });
 
-  const output = vscode.window.createOutputChannel('Orchy');
   context.subscriptions.push(output);
 
   if (!worktrees.isGitRepo()) {

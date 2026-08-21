@@ -2,7 +2,7 @@
   "name": "orchy",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code \u2014 a grid of isolated agents, driven by an orchestrator, with live topology.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -186,8 +186,8 @@
         },
         "orchy.miniTui": {
           "type": "boolean",
-          "default": false,
-          "description": "Use OpenCode's compact --mini interface in agent terminals. Denser for narrow columns, but requires a TTY and renders nothing without one."
+          "default": true,
+          "description": "Use OpenCode's compact --mini interface in agent terminals. Required for history replay, so a terminal attached after the agent has spoken still shows what happened. Turn off only if a pane renders blank."
         }
       }
     }

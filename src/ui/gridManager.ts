@@ -38,7 +38,8 @@ export class GridManager implements vscode.Disposable {
 
   constructor(
     private readonly registry: SessionRegistry,
-    private readonly backend: AgentBackend
+    private readonly backend: AgentBackend,
+    private readonly log: (message: string) => void = () => undefined
   ) {
     this.disposables.push(
       vscode.window.onDidCloseTerminal((terminal) => this.onTerminalClosed(terminal)),
@@ -88,12 +89,19 @@ export class GridManager implements vscode.Disposable {
       return false;
     }
 
+    // Logged verbatim: when a pane comes up blank this is the one thing worth
+    // seeing, and it can be pasted straight into a normal terminal to compare.
+    this.log(`[${session.id}] ${attach.command} ${attach.args.join(' ')}`);
+
     const terminal = vscode.window.createTerminal({
       name: `${session.id} · ${session.role}`,
       location: { viewColumn: SLOT_COLUMNS[slot], preserveFocus: true },
       cwd: session.worktree?.path,
       shellPath: attach.command,
       shellArgs: attach.args,
+      // shellPath bypasses the user's shell, so no profile runs. A TUI that
+      // cannot identify the terminal may refuse to draw.
+      env: { TERM: 'xterm-256color' },
       iconPath: new vscode.ThemeIcon('robot'),
       color: new vscode.ThemeColor(STATUS_COLORS[session.status] ?? 'terminal.ansiBlue'),
       isTransient: true,
