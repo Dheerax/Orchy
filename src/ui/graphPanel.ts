@@ -324,21 +324,54 @@ export class GraphPanel {
     // main is always lane 0
     branchLaneMap.set('main', { lane: 0, color: LANE_COLORS[0] });
 
-    let nextLane = 1;
-    const getLaneForSession = (sessionId: string): { lane: number; color: string } => {
-      if (!branchLaneMap.has(sessionId)) {
-        const lane = nextLane;
-        const color = LANE_COLORS[lane % LANE_COLORS.length];
-        branchLaneMap.set(sessionId, { lane, color });
-        nextLane++;
-      }
-      return branchLaneMap.get(sessionId)!;
-    };
+    /*
+     * Lanes are allocated when a branch is created and released when it ends,
+     * exactly as a commit graph does it.
+     *
+     * Giving every session a permanent lane of its own meant nine agents drew
+     * nine parallel rails, and every branch had to leap eight lanes sideways in
+     * the height of a single row to reach the trunk — a diagram that is wider
+     * than the pane and says nothing about the shape of the work. Reused lanes
+     * keep live branches next to main, so a fork is a short hop off the trunk
+     * and a merge is a short hop back.
+     *
+     * This walks forwards in time; `history` arrives newest first, so it is
+     * reversed here and the result is looked up by sequence number below.
+     */
+    const laneBySeq = new Map<number, number>();
+    const activeBySeq = new Map<number, number[]>();
+    const laneOfSession = new Map<string, number>();
+    const held = new Set<number>();
 
-    // Pre-assign lanes in order of session creation
-    for (const s of sessions) {
-      getLaneForSession(s.id);
+    for (const event of [...history].reverse()) {
+      // On first sight, not only on `spawned`. The log is trimmed, so an older
+      // agent's spawn may have fallen off the end — and keying off it meant
+      // that agent had no lane, so its work and its merge were drawn on main
+      // itself: a merge arriving from nowhere, into the trunk it was already
+      // on. A branch we join late is still a branch.
+      if (!laneOfSession.has(event.session)) {
+        let lane = 1;
+        while (held.has(lane)) {
+          lane++;
+        }
+        laneOfSession.set(event.session, lane);
+        held.add(lane);
+      }
+      const lane = laneOfSession.get(event.session) ?? 0;
+      laneBySeq.set(event.seq, lane);
+      // Snapshot before releasing: a merge row still has to draw the lane its
+      // curve comes from.
+      activeBySeq.set(event.seq, [0, ...held]);
+      if (event.type === 'merged' || event.type === 'archived' || event.type === 'purged') {
+        held.delete(lane);
+        laneOfSession.delete(event.session);
+      }
     }
+
+    const getLaneForSession = (sessionId: string): { lane: number; color: string } => {
+      const lane = laneOfSession.get(sessionId) ?? branchLaneMap.get(sessionId)?.lane ?? 1;
+      return { lane, color: LANE_COLORS[lane % LANE_COLORS.length] };
+    };
 
     const now = Date.now();
     const formatRelTime = (iso: string): string => {
@@ -350,13 +383,11 @@ export class GraphPanel {
     };
 
     const commits: GitCommitNode[] = [];
-    const activeLanesSet = new Set<number>([0]);
 
     for (const event of history) {
       const s = sessionMap.get(event.session);
-      const sessionInfo = getLaneForSession(event.session);
-      const sessionLane = sessionInfo.lane;
-      const sessionColor = sessionInfo.color;
+      const sessionLane = laneBySeq.get(event.seq) ?? getLaneForSession(event.session).lane;
+      const sessionColor = LANE_COLORS[sessionLane % LANE_COLORS.length];
       const branchName = s?.worktree?.branch || `agent/${event.session}`;
       const role = s?.role || event.session;
       const time = new Date(event.t).toLocaleTimeString([], {
@@ -366,8 +397,7 @@ export class GraphPanel {
       });
       const relTime = formatRelTime(event.t);
 
-      activeLanesSet.add(sessionLane);
-      const currentActive = Array.from(activeLanesSet);
+      const currentActive = activeBySeq.get(event.seq) ?? [0, sessionLane];
 
       if (event.type === 'merged') {
         commits.push({
@@ -417,10 +447,6 @@ export class GraphPanel {
           })),
           activeLanes: currentActive,
         });
-        // History runs newest first, so this row is where the branch begins.
-        // Anything below it happened before the agent existed, and a rail
-        // drawn past its own creation is a line to nowhere.
-        activeLanesSet.delete(sessionLane);
       } else if (event.type === 'deliverable') {
         commits.push({
           id: `deliv-${event.seq}`,
@@ -664,7 +690,7 @@ export class GraphPanel {
   .icon-btn:hover { color: var(--fg); border-color: var(--running); }
 
   #dag-canvas {
-    flex: 1 1 auto; overflow: auto; background: var(--bg);
+    flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; background: var(--bg);
     position: relative; user-select: none;
   }
   #dag-canvas svg { display: block; }
@@ -928,7 +954,9 @@ export class GraphPanel {
     selectedNodeId: null,
     filter: '',
     viewMode: 'split',
-    zoom: 1
+    zoom: 1,
+    // Start fitted. Zooming in is a deliberate act, and returns to this.
+    fitWidth: true
   };
 
   const esc = s => String(s || '').replace(/[&<>"']/g, c =>
@@ -996,7 +1024,18 @@ export class GraphPanel {
     const cx = n => PADX + n.layer * (NW + GAPX);
     const cy = n => PADY + n.lane * (NH + GAPY);
 
-    let svg = '<svg width="' + W + '" height="' + H + '" style="transform: scale(' + state.zoom + '); transform-origin: 0 0;">';
+    /*
+     * Fitted to the pane by default.
+     *
+     * The diagram used to be drawn at full size and left to overflow, so a
+     * pipeline of any width had to be scrolled sideways to be read at all —
+     * and the shape of a pipeline is the one thing that has to be legible in a
+     * glance. Zooming in is a deliberate act now, not the starting position.
+     */
+    const avail = Math.max(160, dagCanvas.clientWidth - 18);
+    const scale = state.fitWidth ? Math.min(1, avail / W) : state.zoom;
+    let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + Math.round(W * scale) +
+      '" height="' + Math.round(H * scale) + '">';
 
     // Stage columns
     for (let l = 0; l < layers; l++) {
@@ -1135,13 +1174,18 @@ export class GraphPanel {
     const rows = Array.from(gitTreeList.querySelectorAll('.git-row'));
     if (!rows.length || !railCommits.length) return;
 
-    const LANE_W = 16, EDGE = 15, DOT = 4.6;
+    const EDGE = 13, DOT = 4.6;
     let maxLane = 0;
     for (const c of railCommits) {
       for (const l of [c.lane, c.fromLane || 0, c.toLane || 0].concat(c.activeLanes || [])) {
         if (l > maxLane) maxLane = l;
       }
     }
+    // The rail never pushes the text sideways off the pane: it gets at most a
+    // third of the width and packs its lanes into that. Wide pipelines get
+    // tighter lanes rather than a horizontal scrollbar.
+    const budget = Math.max(40, Math.min(gitTreeList.clientWidth * 0.33, 190) - EDGE * 2);
+    const LANE_W = maxLane > 0 ? Math.max(7, Math.min(16, Math.floor(budget / maxLane))) : 16;
     const gutter = EDGE * 2 + maxLane * LANE_W;
     gitTreeList.style.setProperty('--gutter', gutter + 'px');
 
@@ -1211,7 +1255,11 @@ export class GraphPanel {
     gitTreeList.appendChild(overlay);
   }
 
-  window.addEventListener('resize', drawRail);
+  // Both surfaces are sized against the pane, so both follow it.
+  window.addEventListener('resize', () => {
+    drawRail();
+    renderWorkflow();
+  });
 
   function renderInspector(id) {
     const node = state.nodes.find(n => n.id === id);
@@ -1341,9 +1389,9 @@ export class GraphPanel {
     const zoomBtn = e.target.closest('[data-zoom]');
     if (zoomBtn) {
       const z = zoomBtn.dataset.zoom;
-      if (z === 'in') state.zoom = Math.min(2.5, state.zoom * 1.2);
-      else if (z === 'out') state.zoom = Math.max(0.4, state.zoom / 1.2);
-      else if (z === 'fit') state.zoom = 1;
+      if (z === 'in') { state.zoom = Math.min(2.5, state.zoom * 1.2); state.fitWidth = false; }
+      else if (z === 'out') { state.zoom = Math.max(0.4, state.zoom / 1.2); state.fitWidth = false; }
+      else if (z === 'fit') { state.zoom = 1; state.fitWidth = true; }
       renderWorkflow();
       return;
     }
