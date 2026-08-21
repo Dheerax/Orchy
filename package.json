@@ -154,6 +154,11 @@
           "type": "number",
           "default": 0,
           "description": "Stop any session whose estimated spend passes this. 0 disables the cap."
+        },
+        "orchy.miniTui": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use OpenCode's compact --mini interface in agent terminals. Denser for narrow columns, but requires a TTY and renders nothing without one."
         }
       }
     }
@@ -161,7 +166,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node out/core/stateLayer.test.js && node out/core/integration.test.js && node mcp/smoke.mjs"
+    "test": "npm run compile && node out/core/stateLayer.test.js && node out/backends/binaryResolution.test.js && node out/core/integration.test.js && node mcp/smoke.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

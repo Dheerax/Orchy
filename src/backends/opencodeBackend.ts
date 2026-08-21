@@ -1,8 +1,93 @@
 import { execFile, spawn } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import { AgentEvent, AgentBackend, BackendCapabilities, BackendHandle, SpawnOpts } from './types';
 import { OpenCodeClient, OpenCodeEvent } from './opencodeClient';
 
 const DEFAULT_PORT = 4096;
+
+let cachedBinary: string | undefined;
+
+/**
+ * Absolute path to the opencode executable.
+ *
+ * On Windows this matters more than it looks. npm installs `opencode` (a POSIX
+ * `#!/bin/sh` script, only runnable from a bash-like shell), `opencode.cmd`, and
+ * `opencode.exe` side by side. Passing the bare name to `createTerminal` or
+ * `spawn` resolves to the extensionless shell script, which Windows cannot
+ * execute — the terminal opens and sits there blank forever with no error.
+ *
+ * Resolution follows npm's .cmd shim to the binary it actually execs, because a
+ * stale opencode.exe from an older install can shadow the current one on PATH.
+ */
+export function resolveOpenCodeBinary(pathEnv = process.env.PATH ?? ''): string {
+  if (cachedBinary) {
+    return cachedBinary;
+  }
+  if (process.platform !== 'win32') {
+    cachedBinary = 'opencode';
+    return cachedBinary;
+  }
+
+  const dirs = pathEnv.split(path.delimiter).filter(Boolean);
+
+  // Preferred: follow npm's .cmd shim to the binary it actually execs. A stale
+  // opencode.exe from an older install can sit on PATH alongside the shim and
+  // shadow it — picking that one gives you a binary that hangs on startup with
+  // no error, which is a genuinely miserable thing to debug.
+  for (const dir of dirs) {
+    const shim = path.join(dir, 'opencode.cmd');
+    if (!fs.existsSync(shim)) {
+      continue;
+    }
+    const target = readShimTarget(shim, dir);
+    if (target) {
+      cachedBinary = target;
+      return cachedBinary;
+    }
+  }
+
+  for (const ext of ['.exe', '.bat', '.cmd']) {
+    for (const dir of dirs) {
+      const candidate = path.join(dir, `opencode${ext}`);
+      if (fs.existsSync(candidate)) {
+        cachedBinary = candidate;
+        return cachedBinary;
+      }
+    }
+  }
+
+  cachedBinary = 'opencode';
+  return cachedBinary;
+}
+
+/** Pull the real executable out of an npm cmd-shim, resolving %dp0%. */
+function readShimTarget(shimPath: string, shimDir: string): string | undefined {
+  let contents: string;
+  try {
+    contents = fs.readFileSync(shimPath, 'utf8');
+  } catch {
+    return undefined;
+  }
+  for (const line of contents.split(/\r?\n/)) {
+    const match = /"([^"]*opencode[^"]*\.exe)"/i.exec(line);
+    if (!match) {
+      continue;
+    }
+    const resolved = path
+      .normalize(match[1].replace(/%dp0%/gi, `${shimDir}${path.sep}`))
+      .replace(/[\\/]{2,}/g, path.sep);
+    if (fs.existsSync(resolved)) {
+      return resolved;
+    }
+  }
+  return undefined;
+}
+
+/** Test seam: clear the memoized lookup. */
+export function resetOpenCodeBinaryCache(): void {
+  cachedBinary = undefined;
+}
 
 /**
  * OpenCode backend.
@@ -19,7 +104,15 @@ export class OpenCodeBackend implements AgentBackend {
   private client: OpenCodeClient;
   private serverProcess: ReturnType<typeof spawn> | undefined;
 
-  constructor(private readonly port = DEFAULT_PORT) {
+  constructor(
+    private readonly port = DEFAULT_PORT,
+    /**
+     * `--mini` is denser and suits a narrow grid column, but it hard-fails with
+     * "requires a TTY stdout" in any context that lacks one. Off by default:
+     * a readable pane beats a dense one that might render nothing.
+     */
+    private readonly options: { mini?: boolean; replayLimit?: number } = {}
+  ) {
     this.client = new OpenCodeClient(`http://127.0.0.1:${port}`);
   }
 
@@ -39,7 +132,9 @@ export class OpenCodeBackend implements AgentBackend {
 
   async isAvailable(): Promise<boolean> {
     return new Promise((resolve) => {
-      execFile('opencode', ['--version'], { windowsHide: true }, (err) => resolve(!err));
+      execFile(resolveOpenCodeBinary(), ['--version'], { windowsHide: true }, (err) =>
+        resolve(!err)
+      );
     });
   }
 
@@ -48,7 +143,7 @@ export class OpenCodeBackend implements AgentBackend {
     if (await this.client.health()) {
       return;
     }
-    this.serverProcess = spawn('opencode', ['serve', '--port', String(this.port)], {
+    this.serverProcess = spawn(resolveOpenCodeBinary(), ['serve', '--port', String(this.port)], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
@@ -109,7 +204,7 @@ export class OpenCodeBackend implements AgentBackend {
 
   attachCommand(handle: BackendHandle): { command: string; args: string[] } {
     return {
-      command: 'opencode',
+      command: resolveOpenCodeBinary(),
       args: [
         'attach',
         this.serverUrl,
@@ -117,9 +212,9 @@ export class OpenCodeBackend implements AgentBackend {
         handle.id,
         '--dir',
         handle.directory,
-        '--mini',
+        ...(this.options.mini ? ['--mini'] : []),
         '--replay-limit',
-        '200',
+        String(this.options.replayLimit ?? 200),
       ],
     };
   }

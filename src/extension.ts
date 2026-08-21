@@ -23,7 +23,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const config = vscode.workspace.getConfiguration('orchy');
   const worktrees = new WorktreeManager(root);
   const registry = new SessionRegistry(new EventLog(orchyDir));
-  const backend = new OpenCodeBackend();
+  const backend = new OpenCodeBackend(undefined, {
+    mini: config.get<boolean>('miniTui', false),
+  });
   const orchestrator = new Orchestrator(registry, worktrees, backend, new DeliverableVerifier(), {
     baseBranch: config.get<string>('baseBranch', 'main'),
   });
