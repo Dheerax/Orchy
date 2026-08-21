@@ -35,6 +35,47 @@ interface PanelSession {
  * In exchange the layout is ours, it is one stable tab, and the editor beside it
  * stays free for actual work.
  */
+/**
+ * Where the panel is drawing.
+ *
+ * The session manager belongs in the bottom panel next to the terminal — that
+ * is where you keep something you glance at while working, rather than a tab
+ * competing with your code. VS Code calls that a webview *view*, which is a
+ * different object from the webview *panel* an editor tab gets, so the two are
+ * flattened to the handful of things this class actually needs.
+ */
+interface Surface {
+  readonly webview: vscode.Webview;
+  readonly visible: boolean;
+  reveal(): void;
+  onDidChangeVisibility(listener: () => void): vscode.Disposable;
+  onDidDispose(listener: () => void): vscode.Disposable;
+}
+
+function surfaceOfView(view: vscode.WebviewView): Surface {
+  return {
+    webview: view.webview,
+    get visible(): boolean {
+      return view.visible;
+    },
+    reveal: () => view.show(true),
+    onDidChangeVisibility: (listener) => view.onDidChangeVisibility(listener),
+    onDidDispose: (listener) => view.onDidDispose(listener),
+  };
+}
+
+function surfaceOfPanel(panel: vscode.WebviewPanel): Surface {
+  return {
+    webview: panel.webview,
+    get visible(): boolean {
+      return panel.visible;
+    },
+    reveal: () => panel.reveal(),
+    onDidChangeVisibility: (listener) => panel.onDidChangeViewState(() => listener()),
+    onDidDispose: (listener) => panel.onDidDispose(listener),
+  };
+}
+
 /** Everything the panel needs to build itself, captured once at activation. */
 export interface PanelDeps {
   registry: SessionRegistry;
@@ -45,6 +86,9 @@ export interface PanelDeps {
 }
 
 export class WorkspacePanel {
+  /** Must match the view contributed to the panel container in package.json. */
+  static readonly viewId = 'orchy.workspaceView';
+
   private static current: WorkspacePanel | undefined;
   private static deps: PanelDeps | undefined;
   private ready = 0;
@@ -54,7 +98,12 @@ export class WorkspacePanel {
   private handles = new Map<string, BackendHandle>();
   private focused: string | undefined;
   private page = 0;
-  private plan: Plan | undefined;
+  /**
+   * Static because a plan outlives any one surface: it can arrive before the
+   * view has been resolved, survive the panel being closed and reopened, and
+   * must be on screen whenever a surface next exists.
+   */
+  private static activePlan: Plan | undefined;
   private pending: NodeJS.Timeout | undefined;
 
   private readonly registry: SessionRegistry;
@@ -68,7 +117,7 @@ export class WorkspacePanel {
   ) => void;
 
   private constructor(
-    private readonly panel: vscode.WebviewPanel,
+    private readonly panel: Surface,
     deps: PanelDeps
   ) {
     this.registry = deps.registry;
@@ -82,7 +131,7 @@ export class WorkspacePanel {
     // Command URIs are what makes the fallback below a real surface rather than
     // a picture of one: the plan can be approved without any script running.
     this.panel.webview.options = { enableScripts: true, enableCommandUris: true };
-    this.panel.webview.html = this.html(WorkspacePanel.bootHtml(this.plan));
+    this.panel.webview.html = this.html(WorkspacePanel.bootHtml(WorkspacePanel.activePlan));
 
     this.panel.webview.onDidReceiveMessage(
       (msg: { type: string; id?: string; file?: string }) => void this.onMessage(msg),
@@ -93,29 +142,25 @@ export class WorkspacePanel {
     const onChanged = (): void => this.schedulePush();
     this.registry.on('changed', onChanged);
 
-    this.panel.onDidChangeViewState(
-      () => {
+    this.disposables.push(
+      this.panel.onDidChangeVisibility(() => {
         if (this.panel.visible) {
           void this.push();
         }
-      },
-      undefined,
-      this.disposables
+      })
     );
 
-    this.panel.onDidDispose(
-      () => {
+    this.disposables.push(
+      this.panel.onDidDispose(() => {
         this.registry.off('changed', onChanged);
         if (this.pending) {
           clearTimeout(this.pending);
         }
-        for (const d of this.disposables) {
-          d.dispose();
+        this.dispose();
+        if (WorkspacePanel.current === this) {
+          WorkspacePanel.current = undefined;
         }
-        WorkspacePanel.current = undefined;
-      },
-      undefined,
-      this.disposables
+      })
     );
   }
 
@@ -127,41 +172,57 @@ export class WorkspacePanel {
    * looking at a tab titled Orchy containing nothing at all — and no way to
    * tell that from a pipeline with nothing in it.
    */
-  static bind(deps: PanelDeps): vscode.Disposable {
+  static bind(deps: PanelDeps): vscode.Disposable[] {
     WorkspacePanel.deps = deps;
-    return vscode.window.registerWebviewPanelSerializer('orchy.workspace', {
-      deserializeWebviewPanel(panel: vscode.WebviewPanel): Promise<void> {
-        if (WorkspacePanel.current) {
-          panel.dispose(); // A second Orchy tab is never what was wanted.
-        } else {
-          WorkspacePanel.current = new WorkspacePanel(panel, deps);
-        }
-        return Promise.resolve();
-      },
-    });
+    return [
+      // The bottom panel is the default home, so this is what normally builds
+      // the session manager. VS Code resolves it when the view is first shown.
+      vscode.window.registerWebviewViewProvider(
+        WorkspacePanel.viewId,
+        {
+          resolveWebviewView(view: vscode.WebviewView): void {
+            WorkspacePanel.current?.dispose();
+            WorkspacePanel.current = new WorkspacePanel(surfaceOfView(view), deps);
+          },
+        },
+        // Same reason as the editor panel: a torn-down webview loses the DOM
+        // and every scroll position with it.
+        { webviewOptions: { retainContextWhenHidden: true } }
+      ),
+
+      // Windows reopened from before the session manager moved still restore an
+      // Orchy editor tab. Adopt it rather than leave the user staring at a dead
+      // one, and let them close it in their own time.
+      vscode.window.registerWebviewPanelSerializer('orchy.workspace', {
+        deserializeWebviewPanel(panel: vscode.WebviewPanel): Promise<void> {
+          if (WorkspacePanel.current) {
+            panel.dispose();
+          } else {
+            WorkspacePanel.current = new WorkspacePanel(surfaceOfPanel(panel), deps);
+          }
+          return Promise.resolve();
+        },
+      }),
+    ];
   }
 
+  /** Bring the session manager up wherever the user keeps it. */
   static show(): void {
     if (WorkspacePanel.current) {
-      WorkspacePanel.current.panel.reveal(undefined, true);
+      WorkspacePanel.current.panel.reveal();
       void WorkspacePanel.current.push();
       return;
     }
-    if (!WorkspacePanel.deps) {
-      return;
+    // Nothing resolved yet: focusing the view is what makes VS Code build it,
+    // and the plan waiting in `activePlan` is drawn as soon as it does.
+    void vscode.commands.executeCommand(`${WorkspacePanel.viewId}.focus`);
+  }
+
+  private dispose(): void {
+    for (const d of this.disposables) {
+      d.dispose();
     }
-    const panel = vscode.window.createWebviewPanel(
-      'orchy.workspace',
-      'Orchy',
-      { viewColumn: vscode.ViewColumn.Active, preserveFocus: true },
-      // Keep the DOM when the panel is hidden. Without this the webview is torn
-      // down and rebuilt every time another tab covers it — and an orchestrator
-      // that opens its own tool output over the panel could rebuild it faster
-      // than it could finish loading, which is a panel that never draws.
-      // It also keeps scroll position, focus and the diagram's pan/zoom.
-      { enableScripts: true, retainContextWhenHidden: true }
-    );
-    WorkspacePanel.current = new WorkspacePanel(panel, WorkspacePanel.deps);
+    this.disposables = [];
   }
 
   private static esc(text: string): string {
@@ -243,7 +304,7 @@ export class WorkspacePanel {
       ready_messages: panel?.ready ?? 0,
       snapshots_pushed: panel?.pushes ?? 0,
       last_push: panel?.lastPush,
-      plan_on_screen: panel?.plan?.id,
+      plan_on_screen: WorkspacePanel.activePlan?.id,
     };
   }
 
@@ -254,30 +315,33 @@ export class WorkspacePanel {
   /** Take a decided plan off the screen, script or no script. */
   static clearPlan(id: string): void {
     const panel = WorkspacePanel.current;
-    if (!panel || panel.plan?.id !== id) {
+    if (!panel || WorkspacePanel.activePlan?.id !== id) {
       return;
     }
-    panel.plan = undefined;
+    WorkspacePanel.activePlan = undefined;
     panel.panel.webview.html = panel.html(WorkspacePanel.bootHtml(undefined));
     void panel.push();
   }
 
   /** Put a proposed plan in front of the user before anything runs. */
   static showPlan(plan: Plan): void {
-    // Opening the panel is the point of this call. Returning quietly because no
+    // Recorded before anything else. Opening the bottom panel takes a round
+    // trip through VS Code, so the surface usually does not exist yet at this
+    // point — and when it resolves a moment later it builds its document from
+    // this, which is what puts the plan on screen. Returning quietly because no
     // panel happened to be open is how a plan gets proposed to nobody.
+    WorkspacePanel.activePlan = plan;
     WorkspacePanel.show();
     if (!WorkspacePanel.current) {
       return;
     }
     const panel = WorkspacePanel.current;
-    panel.plan = plan;
     // Rebuilding the document costs a repaint the user will not notice and
     // guarantees the plan is visible even if the script never runs. A plan is
     // rare and it takes over the panel anyway; live sessions keep streaming
     // over postMessage.
     panel.panel.webview.html = panel.html(WorkspacePanel.bootHtml(plan));
-    panel.panel.reveal(undefined, false);
+    panel.panel.reveal();
     void panel.push();
   }
 
@@ -338,17 +402,17 @@ export class WorkspacePanel {
         break;
       case 'approvePlan':
       case 'rejectPlan':
-        if (this.plan) {
+        if (WorkspacePanel.activePlan) {
           this.onPlanDecision?.(
-            this.plan.id,
+            WorkspacePanel.activePlan.id,
             msg.type === 'approvePlan' ? 'approved' : 'rejected'
           );
-          this.plan = undefined;
+          WorkspacePanel.activePlan = undefined;
           await this.push();
         }
         break;
       case 'revisePlan':
-        if (this.plan) {
+        if (WorkspacePanel.activePlan) {
           // Sent back rather than refused: the orchestrator gets to revise
           // instead of guessing what was wrong with the shape it proposed.
           const feedback = await vscode.window.showInputBox({
@@ -359,9 +423,9 @@ export class WorkspacePanel {
             placeHolder: 'Describe the change you want',
             ignoreFocusOut: true,
           });
-          if (feedback && this.plan) {
-            this.onPlanDecision?.(this.plan.id, 'rejected', feedback);
-            this.plan = undefined;
+          if (feedback && WorkspacePanel.activePlan) {
+            this.onPlanDecision?.(WorkspacePanel.activePlan.id, 'rejected', feedback);
+            WorkspacePanel.activePlan = undefined;
             await this.push();
           }
         }
@@ -453,7 +517,7 @@ export class WorkspacePanel {
         pages,
         blocked: this.registry.needingAttention().length,
         archived: this.registry.all().length - live.length,
-        plan: this.plan,
+        plan: WorkspacePanel.activePlan,
       },
     });
   }

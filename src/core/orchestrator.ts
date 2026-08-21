@@ -256,9 +256,7 @@ export class Orchestrator extends EventEmitter {
     const idByIndex = new Map<number, string>();
 
     // Dependencies first, so an agent's depends_on always resolves.
-    const order = [...plan.agents.keys()].sort(
-      (a, b) => plan.agents[a].dependsOn.length - plan.agents[b].dependsOn.length
-    );
+    const order = Planner.topologicalOrder(plan.agents);
 
     for (const index of order) {
       const agent: PlannedAgent = plan.agents[index];

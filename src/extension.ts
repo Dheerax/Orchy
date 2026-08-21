@@ -70,7 +70,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // tab VS Code restores when the window reopens, which would otherwise sit
   // there empty forever.
   context.subscriptions.push(
-    WorkspacePanel.bind({
+    ...WorkspacePanel.bind({
       registry,
       worktrees,
       backend,
@@ -245,7 +245,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       output.appendLine(`[${target}] terminal: ${attach.command} ${attach.args.join(' ')}`);
     }),
 
-    vscode.commands.registerCommand('orchy.showPipeline', () => GraphPanel.show(registry)),
+    vscode.commands.registerCommand('orchy.showPipeline', () =>
+      GraphPanel.show(registry, worktrees)
+    ),
 
     vscode.commands.registerCommand('orchy.seedTemplates', async () => {
       const dir = new TemplateLibrary(orchyDir).seed();

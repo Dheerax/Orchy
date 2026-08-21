@@ -205,6 +205,42 @@ export class Planner {
     return seen;
   }
 
+  /**
+   * Topological ordering of agents by dependency.
+   *
+   * Dependencies always appear before dependents, so that iterating in this
+   * order guarantees every dependency's session id has already been allocated
+   * when its dependent is spawned.
+   */
+  static topologicalOrder(agents: PlannedAgent[]): number[] {
+    const order: number[] = [];
+    const visited = new Set<number>();
+    const visiting = new Set<number>();
+
+    const visit = (i: number): void => {
+      if (visited.has(i)) {
+        return;
+      }
+      if (visiting.has(i)) {
+        return;
+      }
+      visiting.add(i);
+      for (const dep of agents[i]?.dependsOn ?? []) {
+        if (dep >= 0 && dep < agents.length) {
+          visit(dep);
+        }
+      }
+      visiting.delete(i);
+      visited.add(i);
+      order.push(i);
+    };
+
+    for (let i = 0; i < agents.length; i++) {
+      visit(i);
+    }
+    return order;
+  }
+
   get(id: string): Plan | undefined {
     return this.plans.get(id);
   }

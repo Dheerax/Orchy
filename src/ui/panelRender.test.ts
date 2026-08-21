@@ -38,6 +38,10 @@ loader._load = function (request: string, ...rest: unknown[]): unknown {
 const { WorkspacePanel } = require('./workspacePanel') as {
   WorkspacePanel: { prototype: { html: (boot?: string) => string }; bootHtml: (p: unknown) => string };
 };
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { GraphPanel } = require('./graphPanel') as {
+  GraphPanel: { prototype: { html: () => string } };
+};
 
 let failures = 0;
 let checks = 0;
@@ -229,6 +233,25 @@ ok(
 
 const idle = WorkspacePanel.bootHtml(undefined);
 ok('and with no plan it says what a stuck panel means', idle.includes('did not start'));
+
+console.log('\ngraph panel (pipeline view)');
+
+const graphHtml = GraphPanel.prototype.html.call({} as never);
+const gOpen = graphHtml.indexOf('<script');
+const gScript = graphHtml.slice(graphHtml.indexOf('>', gOpen) + 1, graphHtml.indexOf('</script>', gOpen));
+
+let graphParsed = true;
+let graphWhy = '';
+try {
+  new vm.Script(gScript);
+} catch (err) {
+  graphParsed = false;
+  graphWhy = err instanceof Error ? err.message : String(err);
+}
+ok('graph panel script parses as JavaScript', graphParsed, graphWhy);
+ok('graph panel contains mission control toolbar', graphHtml.includes('id="toolbar"'));
+ok('graph panel contains git tree view', graphHtml.includes('id="git-tree-pane"'));
+ok('graph panel contains inspector drawer', graphHtml.includes('id="inspector-drawer"'));
 
 console.log(failures === 0 ? `\nPASS — ${checks} checks\n` : `\n${failures} of ${checks} FAILED\n`);
 process.exit(failures === 0 ? 0 : 1);

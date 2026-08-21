@@ -132,6 +132,36 @@ ok(
   viaProvides.some((w) => w.includes('src/shared.ts'))
 );
 
+console.log('\ntopological ordering');
+
+check('empty agents array', Planner.topologicalOrder([]), []);
+check('independent agents preserve order', Planner.topologicalOrder([agent({ role: 'a' }), agent({ role: 'b' })]), [0, 1]);
+
+const chain = Planner.topologicalOrder([
+  agent({ role: 'ui', dependsOn: [1] }),
+  agent({ role: 'api', dependsOn: [2] }),
+  agent({ role: 'schema', dependsOn: [] }),
+]);
+check('inverted dependency chain resolves schema -> api -> ui', chain, [2, 1, 0]);
+
+const diamond = Planner.topologicalOrder([
+  agent({ role: 'tests', dependsOn: [1, 2] }),
+  agent({ role: 'api', dependsOn: [3] }),
+  agent({ role: 'ui', dependsOn: [3] }),
+  agent({ role: 'schema', dependsOn: [] }),
+]);
+ok('diamond root dependency comes first', diamond[0] === 3);
+ok('diamond intermediate dependencies come before tests', diamond.indexOf(1) < diamond.indexOf(0) && diamond.indexOf(2) < diamond.indexOf(0));
+
+const unequalDepCounts = Planner.topologicalOrder([
+  agent({ role: 'deploy', dependsOn: [1] }), // len 1, depends on len 2
+  agent({ role: 'e2e', dependsOn: [2, 3] }), // len 2, depends on len 0
+  agent({ role: 'backend', dependsOn: [] }),
+  agent({ role: 'frontend', dependsOn: [] }),
+]);
+ok('deploy is after e2e even with fewer dependencies', unequalDepCounts.indexOf(1) < unequalDepCounts.indexOf(0));
+ok('backend and frontend are before e2e', unequalDepCounts.indexOf(2) < unequalDepCounts.indexOf(1) && unequalDepCounts.indexOf(3) < unequalDepCounts.indexOf(1));
+
 console.log('\napproval');
 
 const planner = new Planner();

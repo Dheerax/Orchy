@@ -267,6 +267,41 @@ void (async (): Promise<void> => {
     fs.existsSync(path.join(dependent.worktree!.path, 'BASE.md'))
   );
 
+  console.log('\nrunPlan with inverted dependency order');
+
+  const plan = orchestrator.planner.propose('Inverted pipeline', [
+    {
+      role: 'consumer',
+      task: 'Consume API',
+      deliverables: [{ kind: 'file', spec: 'CLIENT.md', verified: false }],
+      dependsOn: [1],
+      provides: [],
+      needs: [],
+    },
+    {
+      role: 'producer',
+      task: 'Produce API',
+      deliverables: [{ kind: 'file', spec: 'PROD.md', verified: false }],
+      dependsOn: [],
+      provides: [],
+      needs: [],
+    },
+  ]);
+  orchestrator.planner.settle(plan.id, 'approved');
+  const planSessions = await orchestrator.runPlan(plan);
+  check('runPlan creates all sessions', planSessions.length, 2);
+  const consumerSession = planSessions.find((s) => s.role === 'consumer');
+  const producerSession = planSessions.find((s) => s.role === 'producer');
+  ok('consumer session exists', consumerSession !== undefined);
+  ok('producer session exists', producerSession !== undefined);
+  check('producer session is running', registry.get(producerSession!.id)?.status, 'running');
+  check('consumer session is queued', registry.get(consumerSession!.id)?.status, 'queued');
+  check(
+    'consumer session depends on producer session id',
+    registry.get(consumerSession!.id)?.dependsOn,
+    [producerSession!.id]
+  );
+
   console.log('\na dead dependency does not strand anyone');
 
   const doomed = await orchestrator.spawn({ role: 'doomed', task: 'x', deliverables: [] });
