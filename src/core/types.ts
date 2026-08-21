@@ -151,6 +151,7 @@ export type OrchyEvent =
   | (EventBase & { type: 'budget'; tokensUsed: number; costEstimate: number })
   | (EventBase & { type: 'surface'; terminalId?: string; gridSlot?: number; visible: boolean })
   | (EventBase & { type: 'attached'; handle: string })
+  | (EventBase & { type: 'merged'; branch: string; into: string })
   | (EventBase & { type: 'archived' })
   | (EventBase & { type: 'purged' });
 
@@ -166,5 +167,6 @@ export type DraftEvent =
   | Omit<Extract<OrchyEvent, { type: 'budget' }>, 't' | 'seq'>
   | Omit<Extract<OrchyEvent, { type: 'surface' }>, 't' | 'seq'>
   | Omit<Extract<OrchyEvent, { type: 'attached' }>, 't' | 'seq'>
+  | Omit<Extract<OrchyEvent, { type: 'merged' }>, 't' | 'seq'>
   | Omit<Extract<OrchyEvent, { type: 'archived' }>, 't' | 'seq'>
   | Omit<Extract<OrchyEvent, { type: 'purged' }>, 't' | 'seq'>;

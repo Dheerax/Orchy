@@ -75,6 +75,7 @@ check('server identifies itself', init?.result?.serverInfo?.name, 'orchy-mcp');
 const names = (list?.result?.tools ?? []).map((t) => t.name).sort();
 check('all tools are listed', names, [
   'orchy_archive',
+  'orchy_guide',
   'orchy_interrupt',
   'orchy_kill',
   'orchy_list',
@@ -100,6 +101,19 @@ ok(
   'and the error explains what to do',
   call?.result?.content?.[0]?.text?.includes('not running')
 );
+
+// The guide must answer without a running extension, or an orchestrator cannot
+// learn how to drive the pipeline until the pipeline is already up.
+const [, , guideCall] = await rpc([
+  { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+  { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+  { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'orchy_guide', arguments: {} } },
+]);
+const guideText = guideCall?.result?.content?.[0]?.text ?? '';
+ok('the guide answers with no extension running', !guideCall?.result?.isError);
+ok('and it explains deliverables', guideText.includes('deliverables'));
+ok('and it explains depends_on', guideText.includes('depends_on'));
+ok('and it tells the orchestrator not to sleep-poll', guideText.includes('never sleep'));
 
 fs.rmSync(workspace, { recursive: true, force: true });
 console.log(failures === 0 ? `\nPASS — ${checks} checks\n` : `\n${failures} of ${checks} FAILED\n`);

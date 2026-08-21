@@ -69,6 +69,21 @@ export class SessionRegistry extends EventEmitter {
     }
   }
 
+  /**
+   * Notable events, newest first — what happened and when.
+   * Timeline detail like individual tool calls is excluded; this is the history
+   * of the pipeline, not of every keystroke inside it.
+   */
+  history(limit = 60): OrchyEvent[] {
+    const notable = new Set(['spawned', 'merged', 'archived', 'purged', 'status']);
+    return this.log
+      .tail(600)
+      .filter((e) => notable.has(e.type))
+      .filter((e) => e.type !== 'status' || ['complete', 'failed'].includes(e.status))
+      .reverse()
+      .slice(0, limit);
+  }
+
   /** Sessions a human needs to look at right now. Drives the sidebar badge. */
   needingAttention(): Session[] {
     return this.all().filter((s) => NEEDS_ATTENTION.has(s.status));
@@ -175,6 +190,7 @@ export class SessionRegistry extends EventEmitter {
         this.sessions.delete(event.session);
         break;
 
+      case 'merged':
       case 'tool':
       case 'message':
         // Timeline detail only — consumed by the graph, not by session state.

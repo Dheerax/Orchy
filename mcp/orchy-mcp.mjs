@@ -15,6 +15,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Where to look for a running Orchy.
@@ -95,6 +98,24 @@ const DELIVERABLES_SCHEMA = {
 };
 
 const TOOLS = [
+  {
+    name: 'orchy_guide',
+    description:
+      'How to operate the Orchy pipeline: decomposing work across agents, declaring ' +
+      'deliverables, chaining with depends_on, waiting on events, reusing agents by role, ' +
+      'and reading the status vocabulary. Read this before spawning anything for the first ' +
+      'time in a session — it is short, and using the pipeline badly is worse than not ' +
+      'using it.',
+    inputSchema: { type: 'object', properties: {} },
+    local: () => {
+      const file = path.join(HERE, '..', 'docs', 'ORCHY-GUIDE.md');
+      try {
+        return fs.readFileSync(file, 'utf8');
+      } catch {
+        return `Guide not found at ${file}.`;
+      }
+    },
+  },
   {
     name: 'orchy_spawn',
     description:
@@ -296,8 +317,10 @@ async function handle(msg) {
       return;
     }
     try {
-      const result = await call(tool.route, params.arguments ?? {});
-      reply(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
+      // Some tools answer from disk and need no running extension.
+      const result = tool.local ? tool.local() : await call(tool.route, params.arguments ?? {});
+      const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+      reply(id, { content: [{ type: 'text', text }] });
     } catch (err) {
       reply(id, {
         content: [{ type: 'text', text: `Error: ${err.message}` }],

@@ -519,6 +519,13 @@ export class Orchestrator extends EventEmitter {
       );
     }
     this.worktrees.mergeBack(session.worktree.path, session.worktree.branch, this.config.baseBranch);
+    this.registry.record({
+      type: 'merged',
+      session: id,
+      branch: session.worktree.branch,
+      into: this.config.baseBranch,
+    });
+    this.emit('merged', session);
   }
 
   disposeAll(): void {

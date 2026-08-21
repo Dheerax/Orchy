@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { SessionRegistry } from '../core/sessionRegistry';
-import { NEEDS_ATTENTION, Session, SessionStatus } from '../core/types';
+import { NEEDS_ATTENTION, OrchyEvent, Session, SessionStatus } from '../core/types';
 
 const STATUS_ICON: Record<SessionStatus, { icon: string; color?: string }> = {
   spawning: { icon: 'loading~spin' },
@@ -21,7 +21,16 @@ class GroupNode {
   constructor(readonly label: Group, readonly sessions: Session[]) {}
 }
 
-type Node = GroupNode | Session;
+/** Collapsed by default: history is for looking back, not for watching. */
+class HistoryNode {
+  readonly label = 'History';
+}
+
+class EventNode {
+  constructor(readonly event: OrchyEvent) {}
+}
+
+type Node = GroupNode | HistoryNode | EventNode | Session;
 
 /**
  * Sidebar list of sessions, grouped by what the user has to do about them.
@@ -67,6 +76,9 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<Node> {
     if (node instanceof GroupNode) {
       return node.sessions;
     }
+    if (node instanceof HistoryNode) {
+      return this.registry.history(60).map((e) => new EventNode(e));
+    }
     if (node) {
       return [];
     }
@@ -92,12 +104,25 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<Node> {
         groups.Working.push(session);
       }
     }
-    return GROUP_ORDER.filter((g) => groups[g].length > 0).map(
-      (g) => new GroupNode(g, groups[g])
-    );
+    return [
+      ...GROUP_ORDER.filter((g) => groups[g].length > 0).map((g) => new GroupNode(g, groups[g])),
+      new HistoryNode(),
+    ];
   }
 
   getTreeItem(node: Node): vscode.TreeItem {
+    if (node instanceof HistoryNode) {
+      const item = new vscode.TreeItem('History', vscode.TreeItemCollapsibleState.Collapsed);
+      item.iconPath = new vscode.ThemeIcon('git-merge');
+      item.contextValue = 'orchyHistory';
+      item.tooltip = 'What agents produced and when it merged';
+      return item;
+    }
+
+    if (node instanceof EventNode) {
+      return this.eventItem(node.event);
+    }
+
     if (node instanceof GroupNode) {
       const item = new vscode.TreeItem(
         `${node.label} (${node.sessions.length})`,
@@ -118,6 +143,50 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<Node> {
       title: 'Focus session',
       arguments: [node.id],
     };
+    return item;
+  }
+
+  /** One line of pipeline history: what happened, to whom, and when. */
+  private eventItem(event: OrchyEvent): vscode.TreeItem {
+    const when = new Date(event.t);
+    const time = when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    let label: string;
+    let icon: string;
+    let color: string | undefined;
+    switch (event.type) {
+      case 'merged':
+        label = `${event.session} → ${event.into}`;
+        icon = 'git-merge';
+        color = 'charts.purple';
+        break;
+      case 'spawned':
+        label = `${event.session} spawned`;
+        icon = 'rocket';
+        break;
+      case 'archived':
+        label = `${event.session} archived`;
+        icon = 'archive';
+        break;
+      case 'purged':
+        label = `${event.session} deleted`;
+        icon = 'trash';
+        break;
+      case 'status':
+        label = `${event.session} ${event.status}`;
+        icon = event.status === 'complete' ? 'pass-filled' : 'error';
+        color = event.status === 'complete' ? 'charts.green' : 'charts.red';
+        break;
+      default:
+        label = `${event.session} ${event.type}`;
+        icon = 'circle-small';
+    }
+
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    item.description = time;
+    item.iconPath = new vscode.ThemeIcon(icon, color ? new vscode.ThemeColor(color) : undefined);
+    item.tooltip = `${when.toLocaleString()}
+${event.type}`;
     return item;
   }
 
