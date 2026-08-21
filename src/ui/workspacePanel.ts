@@ -79,8 +79,10 @@ export class WorkspacePanel {
 
     // A restored panel arrives with whatever options it was created with, but
     // its content is gone: it has to be rebuilt from scratch either way.
-    this.panel.webview.options = { enableScripts: true };
-    this.panel.webview.html = this.html();
+    // Command URIs are what makes the fallback below a real surface rather than
+    // a picture of one: the plan can be approved without any script running.
+    this.panel.webview.options = { enableScripts: true, enableCommandUris: true };
+    this.panel.webview.html = this.html(WorkspacePanel.bootHtml(this.plan));
 
     this.panel.webview.onDidReceiveMessage(
       (msg: { type: string; id?: string; file?: string }) => void this.onMessage(msg),
@@ -162,6 +164,75 @@ export class WorkspacePanel {
     WorkspacePanel.current = new WorkspacePanel(panel, WorkspacePanel.deps);
   }
 
+  private static esc(text: string): string {
+    return text.replace(
+      /[&<>"']/g,
+      (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string
+    );
+  }
+
+  private static cmd(command: string, planId: string): string {
+    return `command:${command}?${encodeURIComponent(JSON.stringify([planId]))}`;
+  }
+
+  /**
+   * The panel as plain HTML, before a single line of script has run.
+   *
+   * The renderer is JavaScript talking to the extension over postMessage, and
+   * when that link is down — a webview that never booted, a snapshot posted
+   * into a page that was still loading — the panel showed nothing whatsoever,
+   * which is indistinguishable from an empty pipeline. A decision the user is
+   * being asked to make must not depend on the scripting layer being healthy,
+   * so the plan is written into the document itself and its buttons are command
+   * URIs. The script replaces all of this the moment it has real state.
+   */
+  private static bootHtml(plan: Plan | undefined): string {
+    const esc = WorkspacePanel.esc;
+    if (!plan) {
+      return (
+        '<p class="empty" id="boot">Loading the pipeline\u2026<br><br>' +
+        '<span class="quiet">If this line stays put, the panel\u2019s script did not start. ' +
+        'Reload the window, and tell Orchy \u2014 that is a bug, not an empty pipeline.</span></p>'
+      );
+    }
+
+    const warns = plan.warnings.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
+    const rows = plan.agents
+      .map((a) => {
+        const provides = a.provides.map((p) => p.symbol).join(', ');
+        const io = [
+          provides ? `<span class="pp">\u2192 ${esc(provides)}</span>` : '',
+          a.needs.length ? `<span class="pn">\u2190 ${esc(a.needs.join(', '))}</span>` : '',
+          a.deliverables.length
+            ? `<span class="pv">${esc(a.deliverables.map((d) => d.spec).join(', '))}</span>`
+            : '',
+        ].join('');
+        return (
+          '<div class="prow open">' +
+          `<div class="l1"><span class="pr">${esc(a.role)}</span>` +
+          (a.model ? `<span class="pm">${esc(a.model)}</span>` : '') +
+          '</div>' +
+          (io ? `<div class="l2">${io}</div>` : '') +
+          `<div class="ptask">${esc(a.task)}</div></div>`
+        );
+      })
+      .join('');
+
+    return (
+      '<div id="plan"><h2>' +
+      esc(plan.summary) +
+      `</h2><div class="sub">${plan.agents.length} agent(s). Nothing runs until you approve.</div>` +
+      warns +
+      `<div class="ptree">${rows}</div>` +
+      '<div class="actions">' +
+      `<a class="go" href="${WorkspacePanel.cmd('orchy.approvePlan', plan.id)}">Approve and run</a>` +
+      `<a href="${WorkspacePanel.cmd('orchy.revisePlan', plan.id)}">Request changes\u2026</a>` +
+      `<a class="no" href="${WorkspacePanel.cmd('orchy.rejectPlan', plan.id)}">Reject</a>` +
+      '</div></div>'
+    );
+  }
+
   /** What the panel is doing, for when it is doing nothing. */
   static diagnostics(): Record<string, unknown> {
     const panel = WorkspacePanel.current;
@@ -180,6 +251,17 @@ export class WorkspacePanel {
     WorkspacePanel.current?.schedulePush();
   }
 
+  /** Take a decided plan off the screen, script or no script. */
+  static clearPlan(id: string): void {
+    const panel = WorkspacePanel.current;
+    if (!panel || panel.plan?.id !== id) {
+      return;
+    }
+    panel.plan = undefined;
+    panel.panel.webview.html = panel.html(WorkspacePanel.bootHtml(undefined));
+    void panel.push();
+  }
+
   /** Put a proposed plan in front of the user before anything runs. */
   static showPlan(plan: Plan): void {
     // Opening the panel is the point of this call. Returning quietly because no
@@ -188,9 +270,15 @@ export class WorkspacePanel {
     if (!WorkspacePanel.current) {
       return;
     }
-    WorkspacePanel.current.plan = plan;
-    WorkspacePanel.current.panel.reveal(undefined, false);
-    void WorkspacePanel.current.push();
+    const panel = WorkspacePanel.current;
+    panel.plan = plan;
+    // Rebuilding the document costs a repaint the user will not notice and
+    // guarantees the plan is visible even if the script never runs. A plan is
+    // rare and it takes over the panel anyway; live sessions keep streaming
+    // over postMessage.
+    panel.panel.webview.html = panel.html(WorkspacePanel.bootHtml(plan));
+    panel.panel.reveal(undefined, false);
+    void panel.push();
   }
 
   /** Coalesce bursts: seven agents all emitting events must not mean seven repaints. */
@@ -409,7 +497,7 @@ export class WorkspacePanel {
     return session.task.slice(0, 140);
   }
 
-  private html(): string {
+  private html(boot = ''): string {
     const nonce = String(Math.random()).slice(2);
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -601,9 +689,12 @@ export class WorkspacePanel {
   #plan .arch .par { fill: var(--done); font-size: 9.5px; }
 
   #plan .actions { display: flex; gap: 8px; margin-top: 12px; }
-  #plan .actions button { border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
-                          font-size: 12px; padding: 5px 14px; background: none; color: var(--fg); }
+  #plan .actions button, #plan .actions a {
+                          border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
+                          font-size: 12px; padding: 5px 14px; background: none; color: var(--fg);
+                          text-decoration: none; display: inline-block; }
   #plan .actions .go { border-color: var(--done); color: var(--done); }
+  .quiet { color: var(--muted); font-size: 11px; }
   #plan .actions .no:hover { border-color: var(--failed); color: var(--failed); }
 
   .empty { color: var(--muted); max-width: 560px; line-height: 1.7; margin: auto; text-align: center; }
@@ -617,7 +708,7 @@ export class WorkspacePanel {
   <span class="hint" id="hint"></span>
   <span class="pager" id="pager"></span>
 </header>
-<div id="grid"></div>
+<div id="grid">${boot}</div>
 <script nonce="${nonce}">
   const api = acquireVsCodeApi();
   const grid = document.getElementById('grid');
@@ -790,8 +881,13 @@ export class WorkspacePanel {
         (needs ? '<text class="nv2" x="' + (x(i) + 10) + '" y="' + (y(i) + 54) + '">' +
           esc(fit('\u2190 ' + needs, INNER, 5.2)) + '</text>' : '') +
         '<title>' + esc(a.role + (a.model ? ' \u00b7 ' + a.model : '') +
-          (provides ? '\nprovides ' + provides : '') +
-          (needs ? '\nneeds ' + needs : '')) + '</title></g>';
+          // Escaped twice on purpose. This whole script is a TypeScript template
+          // literal, so a single-backslash newline escape is turned into a real
+          // line break at build time — and inside a single-quoted JavaScript
+          // string that is a syntax error, which stops the entire panel from
+          // running. Even this comment cannot spell it out unescaped.
+          (provides ? '\\nprovides ' + provides : '') +
+          (needs ? '\\nneeds ' + needs : '')) + '</title></g>';
     });
 
     // A long pipeline will not fit whatever height we pick, so the viewport is

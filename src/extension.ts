@@ -495,6 +495,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
+    // Reachable from the panel as command: URIs, so a plan can be decided even
+    // when the webview's script never started. The buttons post messages when
+    // the script is alive; these are the same decision by another road.
+    vscode.commands.registerCommand('orchy.approvePlan', (id: string) => {
+      decidePlan(id, 'approved');
+      WorkspacePanel.clearPlan(id);
+    }),
+
+    vscode.commands.registerCommand('orchy.rejectPlan', (id: string) => {
+      decidePlan(id, 'rejected');
+      WorkspacePanel.clearPlan(id);
+    }),
+
+    vscode.commands.registerCommand('orchy.revisePlan', async (id: string) => {
+      const feedback = await vscode.window.showInputBox({
+        title: 'What should change about this plan?',
+        prompt: 'The orchestrator revises rather than guesses.',
+        placeHolder: 'e.g. the three validators should not depend on each other',
+      });
+      if (feedback) {
+        decidePlan(id, 'rejected', feedback);
+        WorkspacePanel.clearPlan(id);
+      }
+    }),
+
     vscode.commands.registerCommand('orchy.setupLayout', async () => {
       // Deliberately a command rather than something that fires on activation —
       // rearranging someone's editor the moment an extension installs is hostile.

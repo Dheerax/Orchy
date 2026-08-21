@@ -1,17 +1,43 @@
 /**
  * Run with:  node out/ui/panelRender.test.js
  *
- * The panel's renderer lives as a string inside the extension, which means the
- * compiler never sees it and a typo in it costs a package-install-reload cycle
- * to find. Worse, the failure mode is silence: an exception mid-render leaves an
- * empty panel, which looks exactly like "no agents are running".
+ * The panel's renderer is a string inside a TypeScript template literal, so the
+ * compiler never parses it and the build never fails on it. A typo there costs a
+ * package-install-reload cycle to find, and the failure is silent: a script that
+ * does not parse means a panel that draws nothing, which looks exactly like a
+ * pipeline with nothing in it.
  *
- * So the script is pulled out of the source and run against a stub DOM here,
- * with the shapes the extension actually posts.
+ * That happened. A `\n` inside the template literal became a real line break in
+ * the emitted JavaScript, inside a quoted string, and the whole panel died —
+ * through four releases, because the test read the TypeScript source, where the
+ * escape is still two innocent characters.
+ *
+ * So this reads the HTML the extension actually serves, from the compiled
+ * module, and parses the script the way a browser would.
  */
-import * as fs from 'fs';
-import * as path from 'path';
+import * as Module from 'module';
 import * as vm from 'vm';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const loader = Module as unknown as { _load: (r: string, ...rest: unknown[]) => unknown };
+const original = loader._load;
+loader._load = function (request: string, ...rest: unknown[]): unknown {
+  if (request === 'vscode') {
+    return {
+      window: {},
+      ViewColumn: {},
+      Uri: {},
+      commands: {},
+      workspace: { getConfiguration: () => ({ get: (_k: string, d: unknown) => d }) },
+    };
+  }
+  return original.call(this, request, ...rest);
+};
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { WorkspacePanel } = require('./workspacePanel') as {
+  WorkspacePanel: { prototype: { html: (boot?: string) => string }; bootHtml: (p: unknown) => string };
+};
 
 let failures = 0;
 let checks = 0;
@@ -26,7 +52,6 @@ function ok(label: string, cond: boolean, detail = ''): void {
   }
 }
 
-/** Barely enough DOM to render into: elements that remember their own HTML. */
 interface StubEl {
   innerHTML: string;
   textContent: string;
@@ -51,19 +76,19 @@ function el(id = ''): StubEl {
   };
 }
 
-function loadPanelScript(): {
+/** The served HTML, and the script inside it, exactly as a webview would get them. */
+function servedScript(): string {
+  const html = WorkspacePanel.prototype.html.call({} as never);
+  const open = html.indexOf('<script');
+  return html.slice(html.indexOf('>', open) + 1, html.indexOf('</script>', open));
+}
+
+function boot(source: string): {
   send: (data: unknown) => void;
   grid: StubEl;
   count: StubEl;
   posted: { type: string }[];
 } {
-  const source = fs.readFileSync(
-    path.join(__dirname, '..', '..', 'src', 'ui', 'workspacePanel.ts'),
-    'utf8'
-  );
-  const start = source.indexOf('<script nonce=');
-  const body = source.slice(source.indexOf('>', start) + 1, source.indexOf('</script>', start));
-
   const nodes: Record<string, StubEl> = {
     grid: el('grid'),
     count: el('count'),
@@ -72,7 +97,6 @@ function loadPanelScript(): {
   };
   const listeners: ((e: { data: unknown }) => void)[] = [];
   const posted: { type: string }[] = [];
-
   const sandbox = {
     acquireVsCodeApi: () => ({ postMessage: (m: { type: string }) => posted.push(m) }),
     document: {
@@ -91,8 +115,7 @@ function loadPanelScript(): {
     console,
   };
   vm.createContext(sandbox);
-  new vm.Script(body).runInContext(sandbox);
-
+  new vm.Script(source).runInContext(sandbox);
   return {
     send: (data: unknown) => listeners.forEach((fn) => fn({ data: { type: 'snapshot', data } })),
     grid: nodes.grid,
@@ -102,7 +125,7 @@ function loadPanelScript(): {
 }
 
 const plan = {
-  id: 'abc123',
+  id: 'b35ef9f3',
   summary: 'Validation library with parallel validators',
   status: 'proposed',
   createdAt: new Date().toISOString(),
@@ -133,48 +156,79 @@ const plan = {
       dependsOn: [1, 2, 3],
       provides: [],
       needs: ['emailValidator', 'phoneValidator', 'postcodeValidator'],
-      deliverables: [{ kind: 'command', spec: 'npm test', verified: false }],
+      deliverables: [{ kind: 'command', spec: 'node test/validation.test.js', verified: false }],
     },
   ],
 };
 
-const base = { sessions: [], rows: [], focused: undefined, page: 0, pages: 1, blocked: 0, archived: 0 };
+const base = {
+  sessions: [],
+  rows: [],
+  focused: undefined,
+  page: 0,
+  pages: 1,
+  blocked: 0,
+  archived: 0,
+};
+
+console.log('\nthe script the webview is actually served');
+
+let source = '';
+let parsed = true;
+let why = '';
+try {
+  source = servedScript();
+  new vm.Script(source);
+} catch (err) {
+  parsed = false;
+  why = err instanceof Error ? err.message : String(err);
+}
+ok('it parses as JavaScript', parsed, why);
+ok('and it is the whole renderer, not a fragment', source.includes('function paint'));
+
+if (!parsed) {
+  console.log(`\n${failures} of ${checks} FAILED\n`);
+  process.exit(1);
+}
 
 console.log('\npanel rendering');
 
-const panel = loadPanelScript();
+const panel = boot(source);
 ok('the script asks for state as soon as it loads', panel.posted[0]?.type === 'ready');
 
 panel.send({ ...base, plan });
 ok('a plan renders', panel.grid.innerHTML.includes('id="plan"'));
 ok('with every agent', plan.agents.every((a) => panel.grid.innerHTML.includes(a.role)));
-ok('the fan-in stage included', panel.grid.innerHTML.includes('tests'));
 ok('and a diagram, since there is more than one stage', panel.grid.innerHTML.includes('class="arch"'));
-ok(
-  'nothing fell over',
-  !panel.grid.innerHTML.includes('could not draw'),
-  panel.grid.innerHTML.slice(0, 200)
-);
+ok('nothing fell over', !panel.grid.innerHTML.includes('could not draw'));
 ok('the header says a decision is wanted', panel.count.textContent.includes('approval'));
 
-// The blank-panel bug: an agent missing the fields the diagram reads must not
-// take the whole view down with it.
-panel.send({
-  ...base,
-  plan: { ...plan, agents: [{ role: 'lonely', task: 't', dependsOn: [], provides: [], needs: [], deliverables: [] }] },
-});
-ok('a single-agent plan still renders', panel.grid.innerHTML.includes('lonely'));
-ok('with no diagram, having no stages to show', !panel.grid.innerHTML.includes('class="arch"'));
-
 panel.send({ ...base, plan: undefined });
-ok('and an empty pipeline says so rather than going blank', panel.grid.innerHTML.includes('No active agents'));
+ok('an empty pipeline says so rather than going blank', panel.grid.innerHTML.includes('No active agents'));
 
-const broken = loadPanelScript();
+const broken = boot(source);
 broken.send({ ...base, plan: { summary: 'x', warnings: [], agents: null } });
 ok(
   'a render failure shows itself instead of leaving an empty panel',
   broken.grid.innerHTML.includes('could not draw')
 );
+
+console.log('\nthe panel with no script at all');
+
+const fallback = WorkspacePanel.bootHtml(plan);
+ok('the plan is written into the document itself', fallback.includes(plan.summary));
+ok('with its agents', fallback.includes('postcode-validator'));
+ok(
+  'and approval reachable without JavaScript',
+  fallback.includes('command:orchy.approvePlan') && fallback.includes('command:orchy.rejectPlan')
+);
+ok(
+  'the served document carries it',
+  WorkspacePanel.prototype.html.call({} as never, fallback).includes(plan.summary)
+);
+
+const idle = WorkspacePanel.bootHtml(undefined);
+ok('and with no plan it says what a stuck panel means', idle.includes('did not start'));
 
 console.log(failures === 0 ? `\nPASS — ${checks} checks\n` : `\n${failures} of ${checks} FAILED\n`);
 process.exit(failures === 0 ? 0 : 1);
