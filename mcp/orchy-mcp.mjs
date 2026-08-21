@@ -16,14 +16,41 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 
-const WORKSPACE = process.argv[2] || process.cwd();
+/**
+ * Where to look for a running Orchy.
+ *
+ * An explicit argument wins. Otherwise walk up from the working directory, so a
+ * single global registration works across every project instead of hardcoding
+ * one — MCP servers are launched with cwd set to the project being worked on.
+ */
+function findWorkspace() {
+  if (process.argv[2]) {
+    return { dir: process.argv[2], searched: [process.argv[2]] };
+  }
+  const searched = [];
+  let dir = process.cwd();
+  for (;;) {
+    searched.push(dir);
+    if (fs.existsSync(path.join(dir, '.orchy', 'daemon.json'))) {
+      return { dir, searched };
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      return { dir: process.cwd(), searched };
+    }
+    dir = parent;
+  }
+}
 
 function handshake() {
-  const file = path.join(WORKSPACE, '.orchy', 'daemon.json');
+  const { dir, searched } = findWorkspace();
+  const file = path.join(dir, '.orchy', 'daemon.json');
   if (!fs.existsSync(file)) {
     throw new Error(
-      `Orchy is not running in ${WORKSPACE}. Open that folder in VS Code with the Orchy ` +
-        `extension active, then retry.`
+      `Orchy is not running here. Looked for .orchy/daemon.json in:\n` +
+        searched.map((d) => `  ${d}`).join('\n') +
+        `\n\nOpen the project in VS Code with the Orchy extension active — the daemon ` +
+        `starts with it and writes that file.`
     );
   }
   return JSON.parse(fs.readFileSync(file, 'utf8'));

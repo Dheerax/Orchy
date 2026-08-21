@@ -69,16 +69,27 @@ Run **`Orchy: Set Up Workspace Layout`** from the command palette, then either
 spawn agents by hand (**`Orchy: Spawn Agent Session`**) or point an orchestrator
 at the MCP server:
 
+Register it once, globally — the server finds the right project by walking up
+from its working directory, so one entry covers every workspace:
+
 ```json
 {
   "mcpServers": {
     "orchy": {
+      "type": "stdio",
       "command": "node",
-      "args": ["/path/to/Orchy/mcp/orchy-mcp.mjs", "/path/to/your/project"]
+      "args": ["/path/to/Orchy/mcp/orchy-mcp.mjs"]
     }
   }
 }
 ```
+
+For Claude Code that is `~/.claude.json`. Pass an explicit workspace path as a
+second argument if you would rather pin it to one project.
+
+A project-scoped `.mcp.json` also works, but Claude Code requires those servers
+to be approved before they load — an unapproved one is silently invisible, which
+looks exactly like the tools not existing.
 
 Then tell your orchestrator: *"Spin up a UI agent and a backend agent."*
 
