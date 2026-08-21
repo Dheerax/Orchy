@@ -11,15 +11,17 @@ const MAX_COLUMNS = 4;
 const MAX_ROWS = 3;
 
 /**
- * How many panes go in each row, for `n` visible sessions.
+ * Grid shape for `n` visible sessions: every row the same width.
  *
- * Aims for roughly square panes rather than one long strip: three agents read
- * far better as two-over-one than as three slivers side by side. Earlier rows
- * take the remainder, so a partial row sits at the bottom.
+ * Uniformity is not cosmetic. VS Code mishandles setEditorLayout when rows have
+ * unequal lengths (microsoft/vscode#84425), and the failure mode is brutal — the
+ * call throws after the old panes are already gone, so the grid empties and
+ * nothing says why. Three agents therefore occupy a 2x2 with one cell left
+ * empty, rather than a 2-then-1 that risks taking the whole grid down.
  *
- *   1 → [1]        4 → [2,2]      7 → [3,2,2]    10 → [4,3,3]
- *   2 → [2]        5 → [3,2]      8 → [3,3,2]    11 → [4,4,3]
- *   3 → [2,1]      6 → [3,3]      9 → [3,3,3]    12 → [4,4,4]
+ *   1 → 1x1    4 → 2x2    7 → 3x3    10 → 3x4
+ *   2 → 1x2    5 → 2x3    8 → 3x3    11 → 3x4
+ *   3 → 2x2    6 → 2x3    9 → 3x3    12 → 3x4
  */
 export function planGrid(n: number): number[] {
   const count = Math.max(0, Math.min(n, MAX_VISIBLE));
@@ -28,16 +30,7 @@ export function planGrid(n: number): number[] {
   }
   const columns = Math.min(MAX_COLUMNS, Math.ceil(Math.sqrt(count)));
   const rows = Math.min(MAX_ROWS, Math.ceil(count / columns));
-
-  const plan: number[] = [];
-  let remaining = count;
-  for (let row = 0; row < rows; row++) {
-    const rowsLeft = rows - row;
-    const size = Math.ceil(remaining / rowsLeft);
-    plan.push(size);
-    remaining -= size;
-  }
-  return plan;
+  return Array.from({ length: rows }, () => columns);
 }
 
 export interface EditorGroupLayout {
@@ -64,8 +57,9 @@ export function toEditorLayout(plan: number[]): EditorGroupLayout {
 }
 
 /**
- * 1-based editor column for the nth pane, reading rows left to right.
+ * 1-based editor group for the nth pane, reading rows left to right.
  * VS Code numbers groups in the order the layout declares them.
+ * Trailing cells of a partly filled grid simply stay empty.
  */
 export function columnForIndex(plan: number[], index: number): number {
   const total = plan.reduce((sum, columns) => sum + columns, 0);

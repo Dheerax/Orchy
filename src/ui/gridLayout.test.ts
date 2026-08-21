@@ -28,23 +28,41 @@ console.log('\ngrid plan');
 check('none', planGrid(0), []);
 check('one fills the pane', planGrid(1), [1]);
 check('two sit side by side', planGrid(2), [2]);
-check('three go two over one', planGrid(3), [2, 1]);
+check('three take a 2x2 with one cell spare', planGrid(3), [2, 2]);
 check('four square up', planGrid(4), [2, 2]);
-check('five', planGrid(5), [3, 2]);
+check('five', planGrid(5), [3, 3]);
 check('six', planGrid(6), [3, 3]);
-check('seven balances', planGrid(7), [3, 2, 2]);
-check('eight', planGrid(8), [3, 3, 2]);
+check('seven', planGrid(7), [3, 3, 3]);
+check('eight', planGrid(8), [3, 3, 3]);
 check('nine', planGrid(9), [3, 3, 3]);
-check('ten', planGrid(10), [4, 3, 3]);
-check('eleven', planGrid(11), [4, 4, 3]);
+check('ten', planGrid(10), [4, 4, 4]);
+check('eleven', planGrid(11), [4, 4, 4]);
 check('twelve fills three rows of four', planGrid(12), [4, 4, 4]);
+
+console.log('\nevery row is the same width');
+
+for (let n = 1; n <= 12; n++) {
+  const plan = planGrid(n);
+  checks++;
+  if (new Set(plan).size !== 1) {
+    failures++;
+    console.log(`  FAIL n=${n} produced unequal rows ${JSON.stringify(plan)}`);
+  }
+}
+check('rows stay uniform for every count (vscode#84425)', true, true);
+check(
+  'a grid always has room for the agents it holds',
+  [1, 3, 5, 7, 8, 10, 11].every((n) => planGrid(n).reduce((a, b) => a + b, 0) >= n),
+  true
+);
 
 console.log('\nplans never exceed the ceiling');
 
 for (let n = 0; n <= 40; n++) {
   const plan = planGrid(n);
   const total = plan.reduce((a, b) => a + b, 0);
-  if (plan.length > 3 || plan.some((c) => c > 4) || total > MAX_VISIBLE) {
+  const undersized = n <= MAX_VISIBLE && n > total;
+  if (plan.length > 3 || plan.some((c) => c > 4) || total > MAX_VISIBLE || undersized) {
     failures++;
     checks++;
     console.log(`  FAIL n=${n} produced ${JSON.stringify(plan)}`);
@@ -59,7 +77,7 @@ const layout = toEditorLayout(planGrid(3));
 check('rows stack vertically', layout.orientation, 1);
 check('two rows', layout.groups.length, 2);
 check('first row has two columns', layout.groups[0].groups?.length, 2);
-check('second row has one', layout.groups[1].groups?.length, 1);
+check('so does the second', layout.groups[1].groups?.length, 2);
 check(
   'row sizes sum to one',
   layout.groups.reduce((sum, g) => sum + (g.size ?? 0), 0),
@@ -74,7 +92,7 @@ check(
 console.log('\ncolumn assignment');
 
 const plan12 = planGrid(12);
-check('first pane is column one', columnForIndex(plan12, 0), 1);
+check('first pane is group one', columnForIndex(plan12, 0), 1);
 check('fifth pane starts row two', columnForIndex(plan12, 4), 5);
 check('last pane is column twelve', columnForIndex(plan12, 11), 12);
 check('out of range clamps', columnForIndex(plan12, 99), 12);

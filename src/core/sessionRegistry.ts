@@ -157,6 +157,12 @@ export class SessionRegistry extends EventEmitter {
         };
         break;
 
+      case 'attached':
+        // Persisted so a reloaded window can reconnect to a session that is
+        // still running on the backend, instead of stranding it forever.
+        session.backend = { ...session.backend, handle: event.handle };
+        break;
+
       case 'archived':
         session.status = 'archived';
         session.surface = { visible: false };

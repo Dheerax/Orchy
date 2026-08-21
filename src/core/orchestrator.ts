@@ -106,6 +106,7 @@ export class Orchestrator extends EventEmitter {
       });
       this.handles.set(id, handle);
       this.attach(id, handle, req.budgetCap);
+      this.registry.record({ type: 'attached', session: id, handle: handle.id });
       this.registry.record({ type: 'status', session: id, status: 'running' });
     } catch (err) {
       this.registry.record({
@@ -253,6 +254,43 @@ export class Orchestrator extends EventEmitter {
       this.emit('completed', after);
     }
     return after;
+  }
+
+  /**
+   * Re-adopt sessions a previous window spawned.
+   *
+   * Without this, reloading strands every live agent: the session keeps running
+   * on the backend but this window holds no handle for it, so it can never be
+   * shown in the grid again. Returns the sessions successfully reconnected.
+   */
+  async adoptExisting(): Promise<Session[]> {
+    const adopted: Session[] = [];
+    for (const session of this.registry.all()) {
+      if (this.handles.has(session.id) || !session.backend.handle || !session.worktree) {
+        continue;
+      }
+      if (['archived', 'complete', 'failed'].includes(session.status)) {
+        continue;
+      }
+      const handle: BackendHandle = {
+        id: session.backend.handle,
+        directory: session.worktree.path,
+      };
+      try {
+        // Prove the session is really still there before claiming it.
+        await this.backend.transcript?.(handle);
+      } catch {
+        continue;
+      }
+      this.handles.set(session.id, handle);
+      this.attach(session.id, handle);
+      // Fresh-window reconciliation marked this detached; we are listening
+      // again now, and the event stream will correct it within a turn.
+      this.registry.record({ type: 'status', session: session.id, status: 'running' });
+      void this.refreshUsage(session.id);
+      adopted.push(session);
+    }
+    return adopted;
   }
 
   /** Backend handle for a session spawned in this window, if any. */

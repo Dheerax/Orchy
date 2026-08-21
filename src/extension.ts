@@ -57,6 +57,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
   }
 
+  // Reclaim agents a previous window left running before anything reconciles
+  // them away, so a reload does not strand live work off-screen.
+  void orchestrator.adoptExisting().then((adopted) => {
+    for (const session of adopted) {
+      const handle = orchestrator.handleOf(session.id);
+      if (handle) {
+        grid.open(session, handle);
+      }
+    }
+    if (adopted.length > 0) {
+      output.appendLine(`Reconnected ${adopted.length} session(s) from a previous window.`);
+    }
+  });
+
   try {
     const port = await daemon.start();
     output.appendLine(`Orchy daemon listening on 127.0.0.1:${port}`);
