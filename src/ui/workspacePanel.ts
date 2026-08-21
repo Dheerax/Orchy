@@ -499,15 +499,21 @@ export class WorkspacePanel {
   #plan .sub { color: var(--muted); font-size: 11.5px; margin-bottom: 12px; }
   #plan .warn { border-left: 2px solid var(--blocked); background: rgba(204,167,0,.08);
                 padding: 6px 10px; margin-bottom: 6px; font-size: 11.5px; }
-  #plan .agent { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
-                 margin-bottom: 6px; }
-  #plan .agent .top { display: flex; gap: 8px; align-items: baseline; }
-  #plan .agent .r { font-weight: 600; }
-  #plan .agent .dep { color: var(--muted); font-size: 11px; margin-left: auto; }
-  #plan .agent .t { font-size: 11.5px; margin: 4px 0; }
-  #plan .agent .meta { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
-  #plan .meta .sym { color: var(--done); }
-  #plan .meta .need { color: var(--running); }
+  #plan .ptree { font-size: 12px; }
+  #plan .prow { padding: 3px 0; cursor: pointer; border-radius: 5px; }
+  #plan .prow:hover { background: var(--vscode-list-hoverBackground); }
+  #plan .line { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  #plan .tw { color: var(--muted); font-family: var(--mono); }
+  #plan .pr { font-weight: 600; }
+  #plan .pm { font-family: var(--mono); font-size: 10px; color: var(--running); }
+  #plan .pp { font-family: var(--mono); font-size: 10px; color: var(--done); }
+  #plan .pn { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  #plan .pv { font-family: var(--mono); font-size: 10px; color: var(--unverified);
+              margin-left: auto; }
+  /* The brief is the longest and least glanceable thing here: one line until asked for. */
+  #plan .ptask { color: var(--muted); font-size: 11px; margin-left: 22px;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #plan .prow.open .ptask { white-space: pre-wrap; }
   /* The architecture, drawn. A list of agents is not a shape, and the shape is
      the thing being approved. */
   #plan .arch { border: 1px solid var(--line); border-radius: 8px; padding: 8px;
@@ -618,7 +624,7 @@ export class WorkspacePanel {
   // Lay agents out by dependency depth, so a column is a stage: everything in
   // one could run at the same time. That makes the width of the widest stage —
   // the actual parallelism being bought — visible at a glance.
-  function archSvg(agents) {
+  function planLayers(agents) {
     const layer = [];
     const depth = (i, seen) => {
       if (layer[i] !== undefined) return layer[i];
@@ -629,13 +635,17 @@ export class WorkspacePanel {
       return layer[i];
     };
     agents.forEach((_, i) => depth(i, new Set()));
-
     const lanes = {};
     const lane = agents.map((_, i) => {
       const l = layer[i];
       lanes[l] = (lanes[l] || 0);
       return lanes[l]++;
     });
+    return { layer, lane, lanes };
+  }
+
+  function archSvg(agents) {
+    const { layer, lane, lanes } = planLayers(agents);
 
     const stages = Math.max(...layer) + 1;
     // With one stage there is no ordering to show — a single row of boxes says
@@ -682,31 +692,41 @@ export class WorkspacePanel {
 
   function planHtml(p) {
     const warns = p.warnings.map(w => '<div class="warn">' + esc(w) + '</div>').join('');
-    const agents = p.agents.map(a => {
-      const deps = a.dependsOn.length
-        ? 'after ' + a.dependsOn.map(x => esc(p.agents[x] ? p.agents[x].role : x)).join(', ')
-        : 'starts immediately';
-      const provides = a.provides.map(x =>
-        '<span class="sym">' + esc(x.symbol) + '</span> in ' + esc(x.file)).join(', ');
-      const needs = a.needs.map(x => '<span class="need">' + esc(x) + '</span>').join(', ');
-      const delivers = a.deliverables.map(x => esc(x.spec)).join(', ');
-      return '<div class="agent"><div class="top"><span class="r">' + esc(a.role) + '</span>' +
-        '<span class="dep">' + deps + '</span></div>' +
-        '<div class="t">' + esc(a.task) + '</div>' +
-        (provides ? '<div class="meta">provides ' + provides + '</div>' : '') +
-        (needs ? '<div class="meta">needs ' + needs + '</div>' : '') +
-        (delivers ? '<div class="meta">verifies ' + delivers + '</div>' : '') +
-        '</div>';
+    const { layer } = planLayers(p.agents);
+    const order = p.agents.map((_, i) => i).sort((a, b) => layer[a] - layer[b] || a - b);
+
+    // A compact tree rather than a wall of prose. The task is the longest thing
+    // on any agent and the least useful at a glance, so it is one line until
+    // asked for; the structure and the interface are what the shape is judged on.
+    const rows = order.map(i => {
+      const a = p.agents[i];
+      const stage = layer[i];
+      const last = order.filter(j => layer[j] === stage).pop() === i;
+      const branch = stage === 0 ? '' : (last ? '└─ ' : '├─ ');
+      const provides = a.provides.map(v => v.symbol).join(', ');
+      const needs = a.needs.join(', ');
+      const verifies = a.deliverables.map(d => d.spec).join(', ');
+      return '<div class="prow" data-row="' + i + '" style="padding-left:' + (stage * 18) + 'px">' +
+        '<div class="line">' +
+          '<span class="tw">' + branch + '</span>' +
+          '<span class="pr">' + esc(a.role) + '</span>' +
+          (a.model ? '<span class="pm">' + esc(a.model) + '</span>' : '') +
+          (provides ? '<span class="pp">&rarr; ' + esc(provides) + '</span>' : '') +
+          (needs ? '<span class="pn">&larr; ' + esc(needs) + '</span>' : '') +
+          (verifies ? '<span class="pv">' + esc(verifies) + '</span>' : '') +
+        '</div>' +
+        '<div class="ptask">' + esc(a.task) + '</div>' +
+      '</div>';
     }).join('');
 
     return '<div id="plan"><h2>' + esc(p.summary) + '</h2>' +
       '<div class="sub">' + p.agents.length +
-      ' agent(s) proposed. Nothing runs until you approve. ' +
-      'Request changes to send it back for revision.</div>' +
-      archSvg(p.agents) + warns + agents +
+      ' agent(s). Nothing runs until you approve. Click an agent for its full brief.</div>' +
+      archSvg(p.agents) + warns +
+      '<div class="ptree">' + rows + '</div>' +
       '<div class="actions">' +
         '<button class="go" data-plan="approvePlan">Approve and run</button>' +
-        '<button data-plan="revisePlan">Request changes…</button>' +
+        '<button data-plan="revisePlan">Request changes&hellip;</button>' +
         '<button class="no" data-plan="rejectPlan">Reject</button>' +
       '</div></div>';
   }
@@ -760,6 +780,8 @@ export class WorkspacePanel {
   grid.addEventListener('click', e => {
     const plan = e.target.closest('[data-plan]');
     if (plan) { api.postMessage({ type: plan.dataset.plan }); return; }
+    const prow = e.target.closest('[data-row]');
+    if (prow) { prow.classList.toggle('open'); return; }
     const file = e.target.closest('.file');
     if (file) { api.postMessage({ type: 'diff', id: file.dataset.id, file: file.dataset.file }); return; }
     const act = e.target.closest('[data-act]');
