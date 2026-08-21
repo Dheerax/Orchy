@@ -1,0 +1,259 @@
+#!/usr/bin/env node
+/**
+ * orchy-mcp — the seam between an orchestrator agent and the Orchy extension.
+ *
+ * Deliberately dumb: it holds no state and makes no decisions. It finds the
+ * running extension via `.orchy/daemon.json` and forwards tool calls to it.
+ * If the extension is not running, every tool says so plainly rather than
+ * half-working.
+ *
+ * Hand-rolled JSON-RPC over stdio, no dependencies — this ships inside a VS Code
+ * extension and pulling an SDK in for three message types is not worth it.
+ *
+ * Usage:  node orchy-mcp.mjs [workspace-root]
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import readline from 'node:readline';
+
+const WORKSPACE = process.argv[2] || process.cwd();
+
+function handshake() {
+  const file = path.join(WORKSPACE, '.orchy', 'daemon.json');
+  if (!fs.existsSync(file)) {
+    throw new Error(
+      `Orchy is not running in ${WORKSPACE}. Open that folder in VS Code with the Orchy ` +
+        `extension active, then retry.`
+    );
+  }
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+async function call(route, body = {}) {
+  const { port, token } = handshake();
+  const res = await fetch(`http://127.0.0.1:${port}${route}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-orchy-token': token },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`Orchy daemon returned non-JSON (${res.status}): ${text.slice(0, 300)}`);
+  }
+  if (!res.ok) {
+    throw new Error(parsed.error || `Orchy daemon error ${res.status}`);
+  }
+  return parsed;
+}
+
+const DELIVERABLES_SCHEMA = {
+  type: 'array',
+  description:
+    'What this session must produce. A session cannot be marked complete until every ' +
+    'entry verifies, so declare something checkable — a backend going quiet is not evidence of work.',
+  items: {
+    type: 'object',
+    properties: {
+      kind: { type: 'string', enum: ['file', 'glob', 'command'] },
+      spec: {
+        type: 'string',
+        description: 'Path, glob, or shell command. e.g. "src/api.ts", "docs/*.md", "npm test"',
+      },
+    },
+    required: ['kind', 'spec'],
+  },
+};
+
+const TOOLS = [
+  {
+    name: 'orchy_spawn',
+    description:
+      'Start an agent session in its own git worktree and place it in the IDE grid. ' +
+      'Use one session per decoupled area of work (ui, backend, docs, ml). Always declare ' +
+      'deliverables — without them the session can never reach "complete".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        role: { type: 'string', description: 'ui | backend | ml | docs | free text' },
+        task: { type: 'string', description: 'What this agent should do.' },
+        name: { type: 'string', description: 'Short human label.' },
+        model: { type: 'string', description: 'provider/model, e.g. opencode/ling-3.0-flash-free' },
+        deliverables: DELIVERABLES_SCHEMA,
+        budget_cap: { type: 'number', description: 'Stop the session past this spend.' },
+        share_workspace: {
+          type: 'boolean',
+          description: 'Skip worktree isolation. Only for read-only research.',
+        },
+        auto_approve: {
+          type: 'boolean',
+          description: 'Auto-approve permission prompts. Dangerous; prefer false.',
+        },
+      },
+      required: ['role', 'task'],
+    },
+    route: '/spawn',
+  },
+  {
+    name: 'orchy_list',
+    description: 'List every session with status, branch, and deliverable state.',
+    inputSchema: { type: 'object', properties: {} },
+    route: '/list',
+  },
+  {
+    name: 'orchy_status',
+    description: 'Full status for one session, including which deliverables are still missing.',
+    inputSchema: {
+      type: 'object',
+      properties: { session_id: { type: 'string' } },
+      required: ['session_id'],
+    },
+    route: '/status',
+  },
+  {
+    name: 'orchy_send',
+    description: 'Send a follow-up prompt to a running session.',
+    inputSchema: {
+      type: 'object',
+      properties: { session_id: { type: 'string' }, text: { type: 'string' } },
+      required: ['session_id', 'text'],
+    },
+    route: '/send',
+  },
+  {
+    name: 'orchy_verify',
+    description:
+      'Re-check a session\'s deliverables. This is the only way a session becomes "complete" — ' +
+      'a session reporting idle has proven nothing.',
+    inputSchema: {
+      type: 'object',
+      properties: { session_id: { type: 'string' } },
+      required: ['session_id'],
+    },
+    route: '/verify',
+  },
+  {
+    name: 'orchy_interrupt',
+    description: 'Cancel a session\'s current turn without ending the session.',
+    inputSchema: {
+      type: 'object',
+      properties: { session_id: { type: 'string' }, reason: { type: 'string' } },
+      required: ['session_id'],
+    },
+    route: '/interrupt',
+  },
+  {
+    name: 'orchy_merge',
+    description:
+      'Rebase a session\'s branch onto main and fast-forward merge it. Refused unless the ' +
+      'session is verified complete.',
+    inputSchema: {
+      type: 'object',
+      properties: { session_id: { type: 'string' } },
+      required: ['session_id'],
+    },
+    route: '/merge',
+  },
+  {
+    name: 'orchy_archive',
+    description:
+      'Finish a session and remove its worktree. Refuses if the worktree has uncommitted ' +
+      'changes unless force is true.',
+    inputSchema: {
+      type: 'object',
+      properties: { session_id: { type: 'string' }, force: { type: 'boolean' } },
+      required: ['session_id'],
+    },
+    route: '/archive',
+  },
+  {
+    name: 'orchy_kill',
+    description: 'Stop a session immediately. Its worktree and transcript are kept.',
+    inputSchema: {
+      type: 'object',
+      properties: { session_id: { type: 'string' } },
+      required: ['session_id'],
+    },
+    route: '/kill',
+  },
+];
+
+function reply(id, result) {
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
+}
+
+function replyError(id, message) {
+  process.stdout.write(
+    JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32000, message } }) + '\n'
+  );
+}
+
+async function handle(msg) {
+  const { id, method, params } = msg;
+
+  if (method === 'initialize') {
+    reply(id, {
+      protocolVersion: '2024-11-05',
+      capabilities: { tools: {} },
+      serverInfo: { name: 'orchy-mcp', version: '0.0.1' },
+    });
+    return;
+  }
+
+  if (method === 'notifications/initialized') {
+    return; // notification, no reply
+  }
+
+  if (method === 'tools/list') {
+    reply(id, {
+      tools: TOOLS.map(({ name, description, inputSchema }) => ({
+        name,
+        description,
+        inputSchema,
+      })),
+    });
+    return;
+  }
+
+  if (method === 'tools/call') {
+    const tool = TOOLS.find((t) => t.name === params?.name);
+    if (!tool) {
+      replyError(id, `unknown tool: ${params?.name}`);
+      return;
+    }
+    try {
+      const result = await call(tool.route, params.arguments ?? {});
+      reply(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
+    } catch (err) {
+      reply(id, {
+        content: [{ type: 'text', text: `Error: ${err.message}` }],
+        isError: true,
+      });
+    }
+    return;
+  }
+
+  if (id !== undefined) {
+    replyError(id, `unsupported method: ${method}`);
+  }
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  if (!line.trim()) {
+    return;
+  }
+  let msg;
+  try {
+    msg = JSON.parse(line);
+  } catch {
+    return; // Not our frame; ignore rather than crash the transport.
+  }
+  handle(msg).catch((err) => {
+    if (msg.id !== undefined) {
+      replyError(msg.id, err.message);
+    }
+  });
+});

@@ -1,13 +1,13 @@
 {
   "name": "orchy",
   "displayName": "Orchy",
-  "description": "Multi-agent coding orchestration for VS Code — a terminal grid of isolated agents, driven by an orchestrator, with live topology.",
+  "description": "Multi-agent coding orchestration for VS Code \u2014 a grid of isolated agents, driven by an orchestrator, with live topology.",
   "version": "0.0.1",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dheer/Orchy.git"
+    "url": "https://github.com/Dheerax/Orchy.git"
   },
   "engines": {
     "vscode": "^1.90.0"
@@ -17,14 +17,119 @@
     "Other"
   ],
   "main": "./out/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
-    "commands": [
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "orchy",
+          "title": "Orchy",
+          "icon": "media/orchy.svg"
+        }
+      ]
+    },
+    "views": {
+      "orchy": [
+        {
+          "id": "orchy.sessions",
+          "name": "Sessions",
+          "contextualTitle": "Orchy"
+        }
+      ]
+    },
+    "viewsWelcome": [
       {
-        "command": "orchy.showState",
-        "title": "Orchy: Show Pipeline State"
+        "view": "orchy.sessions",
+        "contents": "No agent sessions yet.\n\nEach session runs in its own git worktree and appears in the editor grid.\n\n[Spawn an agent](command:orchy.spawn)\n[Set up workspace layout](command:orchy.setupLayout)\n\nOr let an orchestrator drive it through the orchy-mcp tools."
       }
     ],
+    "commands": [
+      {
+        "command": "orchy.spawn",
+        "title": "Orchy: Spawn Agent Session",
+        "icon": "$(add)"
+      },
+      {
+        "command": "orchy.showGraph",
+        "title": "Orchy: Show Topology",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "orchy.setupLayout",
+        "title": "Orchy: Set Up Workspace Layout"
+      },
+      {
+        "command": "orchy.verify",
+        "title": "Orchy: Verify Deliverables",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "orchy.merge",
+        "title": "Orchy: Merge Session Into Main"
+      },
+      {
+        "command": "orchy.archive",
+        "title": "Orchy: Archive Session",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "orchy.kill",
+        "title": "Orchy: Kill Session",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "orchy.pruneWorktrees",
+        "title": "Orchy: Prune Orphaned Worktrees"
+      },
+      {
+        "command": "orchy.focusSession",
+        "title": "Orchy: Focus Session"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "orchy.focusSession",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "orchy.spawn",
+          "when": "view == orchy.sessions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "orchy.showGraph",
+          "when": "view == orchy.sessions",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "orchy.verify",
+          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
+          "group": "inline@1"
+        },
+        {
+          "command": "orchy.merge",
+          "when": "view == orchy.sessions && viewItem == orchySession.complete",
+          "group": "1_act@1"
+        },
+        {
+          "command": "orchy.archive",
+          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
+          "group": "9_danger@1"
+        },
+        {
+          "command": "orchy.kill",
+          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
+          "group": "9_danger@2"
+        }
+      ]
+    },
     "configuration": {
       "title": "Orchy",
       "properties": {
@@ -38,19 +143,25 @@
           "default": 2,
           "minimum": 1,
           "maximum": 4,
-          "description": "How many agent terminals are visible in the editor grid at once. Sessions beyond this run detached."
+          "description": "How many agent terminals are visible in the editor grid at once. Sessions beyond this keep running, detached."
         },
         "orchy.autoPromoteOnBlocked": {
           "type": "boolean",
           "default": true,
           "description": "When a session needs input, bring its terminal into a visible grid slot. Never steals focus."
+        },
+        "orchy.globalBudgetCap": {
+          "type": "number",
+          "default": 0,
+          "description": "Stop any session whose estimated spend passes this. 0 disables the cap."
         }
       }
     }
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node out/core/stateLayer.test.js && node out/core/integration.test.js && node mcp/smoke.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

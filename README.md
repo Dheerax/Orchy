@@ -1,99 +1,143 @@
-# OpenCode Agentic Orchestration Pipeline
+# Orchy
 
-This document details the architecture and ideation for a parallel, multi-agent orchestration pipeline utilizing `opencode-mcp-bridge` to manage specialized subagents with a shared memory block.
+Multi-agent coding orchestration inside VS Code. An orchestrator agent spawns
+specialist agents; each one gets its own git worktree and its own terminal in the
+editor grid; a topology panel shows which of them needs you.
 
-## 1. Architectural Overview
-
-The core objective is to maximize development productivity by running specialized, concurrent subagents on different parts of a codebase (UI, Backend, Docs, ML/Scripting) while maintaining alignment through a centralized, reactive state.
-
-```
-                  ┌────────────────────────┐
-                  │   Coordinator Agent    │ (Main CLI Session)
-                  └───────────┬────────────┘
-                              │
-             Writes updates   │   Reads status / Coordinates
-             to Memory Block  │   via opencode-mcp-bridge
-                              ▼
-                  ┌────────────────────────┐
-                  │  Shared Memory Block   │ (.opencode-context.json)
-                  └───────────┬────────────┘
-                              │
-       ┌──────────────────────┼──────────────────────┐
-       │ (Read State)         │ (Read State)         │ (Read State)
-       ▼                      ▼                      ▼
-┌──────────────┐       ┌──────────────┐       ┌──────────────┐
-│   UI Agent   │       │Backend Agent │       │   ML Agent   │
-│  (Session A) │       │  (Session B) │       │  (Session C) │
-└──────────────┘       └──────────────┘       └──────────────┘
-```
+> **Status: early.** The state layer, worktree isolation, orchestration, MCP
+> surface, and UI are built and tested. Not yet published to the Marketplace.
 
 ---
 
-## 2. Component Design
+## Why this exists
 
-### 2.1 The Coordinator (Conductor)
-The main OpenCode / Antigravity session acts as the conductor of the pipeline. Its responsibilities are:
-1. **Planning**: Taking user requirements and breaking them down into decoupled sub-tasks.
-2. **Context Seeding**: Initializing the Shared Memory Block with the overall task scope and boundaries.
-3. **Delegation**: Spawning individual specialist sessions via `opencode_start` or `opencode_batch`.
-4. **Monitoring**: Tailing the `~/.opencode-mcp-events.jsonl` event log for completion and interaction events.
-5. **Conflict Resolution**: Merging code changes, checking for test regressions, and updating the Shared Memory Block as agents execute.
+Running several coding agents at once is now easy. Knowing what they're doing is not.
 
-### 2.2 Specialist Subagents
-Each subagent is spawned as a dedicated background session with a highly tailored system prompt:
-* **Frontend/UI Agent**: Instructed only to modify design, CSS/styles, and UI components.
-* **Backend/Referee Agent**: Focuses on core business logic, simulation rules, and database engines (e.g., in `sim/world`).
-* **Docs/Specs Agent**: Ensures documentation, test specifications, and README files stay updated in parallel.
-* **ML/Data Agent**: Works on training scripts, Blender sprite pipelines, and data transformations.
+Two problems show up immediately, and nothing in this space solves either:
 
-### 2.3 The Shared Memory Block
-Rather than passing the entire codebase state to every agent, the pipeline utilizes a lightweight, structured state file: `.opencode-context.json` located at the root of the workspace.
+**1. "Idle" doesn't mean "done."** Agents go quiet all the time without having
+produced anything. This project started after three delegated research agents
+reported idle repeatedly for an hour while writing zero files. So in Orchy a
+session declares its deliverables up front and can only reach `complete` when
+every one of them verifies. A backend going quiet proves nothing.
 
-#### Structured Schema Example:
+**2. Past three or four agents, you are the bottleneck.** Not merge conflicts —
+noticing which agent is blocked. Orchy puts that count in a native sidebar badge
+and makes the blocked node the only thing on screen that moves.
+
+## How it works
+
+```
+Orchestrator agent (Claude Code, or any MCP client)
+        │  MCP
+   orchy-mcp  ──HTTP──▶  Extension host  ──▶  .orchy/events.jsonl
+                              │                (append-only source of truth)
+             ┌────────────────┼────────────────┐
+      agent terminals    topology panel    sidebar + badge
+      (editor grid)       (one webview)
+```
+
+- **The extension host owns all state.** Every surface is a disposable renderer
+  that rebuilds from the event log. Close a terminal, background the webview,
+  reload the window — nothing is lost.
+- **One worktree per agent, one branch per worktree.** Git itself guarantees two
+  agents never share a branch.
+- **Terminals, not custom chat UIs.** `opencode attach <url> --session <id>` binds
+  a real TUI to a session that Orchy drives over HTTP. The terminal is a view,
+  never a control surface — nothing sends synthetic keystrokes to an agent.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design, including the feature
+surface spec and what was deliberately deferred.
+
+## Install (development)
+
+```bash
+git clone https://github.com/Dheerax/Orchy.git
+cd Orchy
+npm install
+npm run compile
+```
+
+Then press <kbd>F5</kbd> in VS Code to launch an Extension Development Host.
+
+Requires [OpenCode](https://opencode.ai) on your `PATH`. Orchy starts and manages
+`opencode serve` itself.
+
+## Use
+
+Run **`Orchy: Set Up Workspace Layout`** from the command palette, then either
+spawn agents by hand (**`Orchy: Spawn Agent Session`**) or point an orchestrator
+at the MCP server:
+
 ```json
 {
-  "project": "WorldY",
-  "pipeline_status": "in_progress",
-  "global_invariants": [
-    "No LLM calls or network activity inside sim/world.",
-    "Always iterate maps in sorted key order to ensure determinism."
-  ],
-  "shared_memory": {
-    "active_branches": ["main"],
-    "recent_modifications": {
-      "sim/world/verbs_social.go": "Modified by Backend Agent at tick 12 to add the 'bribe' verb.",
-      "art/post/color.py": "Adjusted palette calculations."
-    },
-    "current_api_contracts": {
-      "verbs": ["bribe", "attack", "observe"]
+  "mcpServers": {
+    "orchy": {
+      "command": "node",
+      "args": ["/path/to/Orchy/mcp/orchy-mcp.mjs", "/path/to/your/project"]
     }
   }
 }
 ```
 
----
+Then tell your orchestrator: *"Spin up a UI agent and a backend agent."*
 
-## 3. Workflow & Verification Loop
+### Tools
 
-1. **Initialization**: The Coordinator writes initial goals to `.opencode-context.json`.
-2. **Launch**:
-   ```javascript
-   opencode_batch([
-     { "task": "Implement the 'bribe' verb in backend sim/world", "model": "flash" },
-     { "task": "Create Blender parametric assets for the bribe animation", "model": "pro" }
-   ])
-   ```
-3. **Execution**:
-   * Each specialist reads `.opencode-context.json` on startup.
-   * Specialists write their changes.
-   * If a specialist makes a breaking change, it reports to the Coordinator, which updates the `.opencode-context.json` file.
-   * The other running specialists read the updated state file to adjust their output.
-4. **Resolution**: The Coordinator pulls diffs using `opencode_diff`, performs linting/compilation verification, and commits clean checkpoints.
+| Tool | What it does |
+|---|---|
+| `orchy_spawn` | Start an agent in its own worktree, placed in the grid |
+| `orchy_list` / `orchy_status` | Session state, including missing deliverables |
+| `orchy_send` | Follow-up prompt to a running session |
+| `orchy_verify` | Re-check deliverables — the only path to `complete` |
+| `orchy_interrupt` / `orchy_kill` | Stop a turn, or stop a session |
+| `orchy_merge` | Rebase onto main and fast-forward. Refused unless verified |
+| `orchy_archive` | Finish and remove the worktree. Refuses if dirty |
 
----
+## Settings
 
-## 4. Why This Approach Excels
+| Setting | Default | |
+|---|---|---|
+| `orchy.baseBranch` | `main` | Branch worktrees cut from and merge into |
+| `orchy.visibleSlots` | `2` | Terminals visible at once. Beyond this, sessions run detached |
+| `orchy.autoPromoteOnBlocked` | `true` | Surface a blocked session. Never steals focus |
+| `orchy.globalBudgetCap` | `0` | Stop a session past this spend. `0` disables |
 
-* **Context Minimization**: Solves the issue of LLMs losing context in large files.
-* **Efficiency**: Running 3 parallel tasks reduces delivery time by up to 60%.
-* **Cost Control**: Flash models can be assigned to simple documentation/boilerplate tasks, saving Pro-tier models for architecture and complex logic.
+## Design decisions worth knowing
+
+- **Closing a terminal does not kill the session.** It detaches. Killing is
+  explicit and confirmed — a stray <kbd>Ctrl</kbd>+<kbd>W</kbd> should not destroy
+  an hour of an agent's work.
+- **Two visible slots by default.** At 1920px with both sidebars open you have
+  ~1040px of editor area. Two panes at ~520px are readable; three at ~347px are not.
+- **`git stash`, `git reset --hard`, and force-push are forbidden to agents.**
+  Worktrees isolate *files*, not the stash — which is shared across every worktree
+  of a repo, so one agent popping a stash can consume another's.
+- **Bootstrapped files are excluded per-worktree.** `.worktreeinclude` copies
+  `.env` and friends into new worktrees, then adds them to that worktree's
+  `info/exclude` so it doesn't read as dirty.
+- **The layout command is a command.** Rearranging someone's editor the moment an
+  extension activates is hostile.
+
+## Adding a backend
+
+Implement [`AgentBackend`](src/backends/types.ts) in one file and register it.
+No changes to the extension host. `capabilities()` is how the orchestrator routes
+work — image generation, for instance, goes to a backend that can actually do it.
+
+Planned: Codex (rollout logs in `~/.codex/sessions`), agy, Claude Code.
+
+## Tests
+
+```bash
+npm test          # state layer + integration (real git worktrees)
+node mcp/smoke.mjs   # MCP protocol
+```
+
+The integration suite creates a throwaway repository and exercises worktree
+creation, isolation, dirty-worktree refusal, deliverable verification, merge
+gating, and rebuild-from-log.
+
+## License
+
+MIT
