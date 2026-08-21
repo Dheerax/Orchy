@@ -2,7 +2,7 @@
   "name": "orchy",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code \u2014 a grid of isolated agents, driven by an orchestrator, with live topology.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -95,6 +95,11 @@
       {
         "command": "orchy.purgeAll",
         "title": "Orchy: Clear All Sessions"
+      },
+      {
+        "command": "orchy.openTranscript",
+        "title": "Orchy: Open Session Transcript",
+        "icon": "$(go-to-file)"
       }
     ],
     "menus": {
@@ -156,6 +161,11 @@
           "command": "orchy.purge",
           "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
           "group": "9_danger@3"
+        },
+        {
+          "command": "orchy.openTranscript",
+          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
+          "group": "1_act@2"
         }
       ]
     },
@@ -171,6 +181,13 @@
           "type": "number",
           "default": 0,
           "description": "Stop any session whose estimated spend passes this. 0 disables the cap."
+        },
+        "orchy.sessionsPerPage": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 12,
+          "description": "How many agent panes share the workspace at once. More sessions than this move to the next page. Twelve is the ceiling \u2014 past that the panes are too small to read."
         }
       }
     }

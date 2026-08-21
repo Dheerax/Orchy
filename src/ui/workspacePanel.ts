@@ -40,6 +40,7 @@ export class WorkspacePanel {
   private disposables: vscode.Disposable[] = [];
   private handles = new Map<string, BackendHandle>();
   private focused: string | undefined;
+  private page = 0;
   private pending: NodeJS.Timeout | undefined;
 
   private constructor(
@@ -120,7 +121,19 @@ export class WorkspacePanel {
     }, 200);
   }
 
-  private async onMessage(msg: { type: string; id?: string; file?: string }): Promise<void> {
+  private get perPage(): number {
+    const configured = vscode.workspace
+      .getConfiguration('orchy')
+      .get<number>('sessionsPerPage', 6);
+    return Math.min(Math.max(configured, 1), 12);
+  }
+
+  private async onMessage(msg: {
+    type: string;
+    id?: string;
+    file?: string;
+    page?: number;
+  }): Promise<void> {
     switch (msg.type) {
       case 'ready':
         await this.push();
@@ -128,6 +141,26 @@ export class WorkspacePanel {
       case 'focus':
         this.focused = this.focused === msg.id ? undefined : msg.id;
         await this.push();
+        break;
+      case 'page':
+        this.page = Math.max(0, msg.page ?? 0);
+        this.focused = undefined;
+        await this.push();
+        break;
+      case 'openTab':
+      case 'openSide':
+        if (msg.id) {
+          await vscode.commands.executeCommand(
+            'orchy.openTranscript',
+            msg.id,
+            msg.type === 'openSide'
+          );
+        }
+        break;
+      case 'purge':
+        if (msg.id) {
+          await vscode.commands.executeCommand('orchy.purge', msg.id);
+        }
         break;
       case 'diff':
         if (msg.id && msg.file) {
@@ -177,9 +210,12 @@ export class WorkspacePanel {
       return;
     }
     const live = this.registry.all().filter((s) => s.status !== 'archived');
-    const sessions: PanelSession[] = [];
+    const pages = Math.max(1, Math.ceil(live.length / this.perPage));
+    this.page = Math.min(this.page, pages - 1);
+    const onPage = live.slice(this.page * this.perPage, this.page * this.perPage + this.perPage);
 
-    for (const session of live.slice(0, 12)) {
+    const sessions: PanelSession[] = [];
+    for (const session of onPage) {
       sessions.push({
         id: session.id,
         name: session.name,
@@ -199,8 +235,18 @@ export class WorkspacePanel {
         sessions,
         rows: planGrid(sessions.length),
         focused: this.focused,
+        page: this.page,
+        pages,
         blocked: this.registry.needingAttention().length,
         archived: this.registry.all().length - live.length,
+        // The topology covers every live agent, not just this page, so the map
+        // stays whole while the panes below it page through.
+        graph: live.map((s) => ({
+          id: s.id,
+          role: s.role,
+          status: s.status,
+          onPage: onPage.some((p) => p.id === s.id),
+        })),
       },
     });
   }
@@ -281,19 +327,47 @@ export class WorkspacePanel {
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    margin: 0; padding: 14px;
+    margin: 0; padding: 8px;
     background: var(--bg); color: var(--fg);
     font-family: var(--vscode-font-family); font-size: 12.5px;
-    display: flex; flex-direction: column; gap: 12px;
+    display: flex; flex-direction: column; gap: 8px;
   }
   header { display: flex; align-items: baseline; gap: 14px; flex: 0 0 auto; }
   h1 { font-size: 13px; margin: 0; font-weight: 600; letter-spacing: .02em; }
   .count { color: var(--muted); font-size: 12px; }
   .count.alert { color: var(--blocked); font-weight: 600; }
-  .hint { margin-left: auto; color: var(--muted); font-size: 11px; }
+  .hint { color: var(--muted); font-size: 11px; }
 
-  #grid { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-  .row { flex: 1 1 0; display: flex; gap: 12px; min-height: 0; }
+  #grid { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+  .row { flex: 1 1 0; display: flex; gap: 6px; min-height: 0; }
+
+  /* Topology: who exists and what state they are in, all at once. */
+  #topo { flex: 0 0 auto; }
+  #topo svg { display: block; width: 100%; height: 54px; }
+  #topo .edge { stroke: var(--line); stroke-width: 1.2; fill: none; }
+  #topo .edge.active { stroke: var(--running); stroke-dasharray: 3 3;
+                       animation: flow 1.1s linear infinite; }
+  #topo .edge.blocked { stroke: var(--blocked); }
+  @keyframes flow { to { stroke-dashoffset: -12; } }
+  body.vscode-reduce-motion #topo .edge.active { animation: none; }
+  #topo .node { cursor: pointer; }
+  #topo .node text { font-size: 8.5px; fill: var(--muted); text-anchor: middle; }
+  #topo .node.onpage text { fill: var(--fg); }
+  #topo circle.hub { fill: var(--card); stroke: var(--line); }
+  #topo text.hublabel { font-size: 8.5px; fill: var(--muted); text-anchor: middle; }
+
+  .pager { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+  .pager button { background: none; border: 1px solid var(--line); border-radius: 5px;
+                  color: var(--muted); font-size: 11px; padding: 1px 7px; cursor: pointer; }
+  .pager button:hover:not(:disabled) { color: var(--fg); border-color: var(--running); }
+  .pager button:disabled { opacity: .35; cursor: default; }
+  .pager .of { color: var(--muted); font-size: 11px; padding: 0 4px; }
+
+  .icons { display: flex; gap: 2px; margin-left: 6px; }
+  .icons button { background: none; border: none; color: var(--muted); cursor: pointer;
+                  font-size: 12px; line-height: 1; padding: 2px 4px; border-radius: 4px; }
+  .icons button:hover { color: var(--fg); background: var(--vscode-list-hoverBackground); }
+  .icons button.danger:hover { color: var(--failed); }
 
   .card {
     flex: 1 1 0; min-width: 0; min-height: 0;
@@ -384,13 +458,17 @@ export class WorkspacePanel {
   <h1>Orchy</h1>
   <span class="count" id="count"></span>
   <span class="hint" id="hint"></span>
+  <span class="pager" id="pager"></span>
 </header>
+<div id="topo"></div>
 <div id="grid"></div>
 <script nonce="${nonce}">
   const api = acquireVsCodeApi();
   const grid = document.getElementById('grid');
   const count = document.getElementById('count');
   const hint = document.getElementById('hint');
+  const pager = document.getElementById('pager');
+  const topo = document.getElementById('topo');
   let scrollMemory = {};
 
   const esc = s => String(s).replace(/[&<>"']/g, c =>
@@ -422,6 +500,11 @@ export class WorkspacePanel {
         '<span class="dot"></span><span class="id">' + esc(s.id) + '</span>' +
         '<span class="role">' + esc(s.role) + '</span>' +
         (s.spend > 0 ? '<span class="spend">' + s.spend.toFixed(3) + '</span>' : '') +
+        '<span class="icons">' +
+          '<button data-act="openTab" data-id="' + esc(s.id) + '" title="Open transcript in a tab">&#10697;</button>' +
+          '<button data-act="openSide" data-id="' + esc(s.id) + '" title="Open transcript to the side">&#8677;</button>' +
+          '<button class="danger" data-act="purge" data-id="' + esc(s.id) + '" title="Delete this session">&#10005;</button>' +
+        '</span>' +
       '</div>' +
       '<div class="body" id="body-' + esc(s.id) + '">' + body + '</div>' +
       '<div class="foot">' + files +
@@ -442,7 +525,49 @@ export class WorkspacePanel {
     document.body.style.setProperty('--pane-line', String(line));
   }
 
+  const STATUS_FILL = {
+    running: 'var(--running)', waiting_input: 'var(--blocked)',
+    idle_unverified: 'var(--unverified)', complete: 'var(--done)',
+    failed: 'var(--failed)', detached: 'var(--muted)', spawning: 'var(--muted)',
+  };
+
+  // Hub and spoke: you on the left, every live agent fanned out from it. Only
+  // relationships Orchy actually records are drawn — no invented edges.
+  function renderTopo(nodes) {
+    if (!nodes.length) { topo.innerHTML = ''; return; }
+    const W = topo.clientWidth || 800, H = 54, hubX = 26, hubY = H / 2, y = hubY - 12;
+    const step = nodes.length > 1 ? (W - 70) / (nodes.length - 1) : 0;
+    const xOf = i => nodes.length > 1 ? 52 + i * step : W / 2;
+
+    let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">';
+    nodes.forEach((n, i) => {
+      const cls = n.status === 'running' ? 'edge active'
+        : (n.status === 'waiting_input' || n.status === 'idle_unverified') ? 'edge blocked' : 'edge';
+      svg += '<path class="' + cls + '" d="M' + hubX + ' ' + hubY + ' C' + (hubX + 30) + ' ' + hubY +
+             ',' + (xOf(i) - 30) + ' ' + y + ',' + xOf(i) + ' ' + y + '"/>';
+    });
+    svg += '<circle class="hub" cx="' + hubX + '" cy="' + hubY + '" r="7"/>' +
+           '<text class="hublabel" x="' + hubX + '" y="' + (hubY + 20) + '">you</text>';
+    nodes.forEach((n, i) => {
+      svg += '<g class="node' + (n.onPage ? ' onpage' : '') + '" data-id="' + esc(n.id) + '">' +
+             '<circle cx="' + xOf(i) + '" cy="' + y + '" r="5" fill="' +
+             (STATUS_FILL[n.status] || 'var(--muted)') + '"/>' +
+             '<text x="' + xOf(i) + '" y="' + (hubY + 14) + '">' + esc(n.id) + '</text></g>';
+    });
+    topo.innerHTML = svg + '</svg>';
+  }
+
+  function renderPager(d) {
+    if (d.pages <= 1) { pager.innerHTML = ''; return; }
+    pager.innerHTML =
+      '<button data-page="' + (d.page - 1) + '"' + (d.page === 0 ? ' disabled' : '') + '>&lsaquo;</button>' +
+      '<span class="of">' + (d.page + 1) + ' / ' + d.pages + '</span>' +
+      '<button data-page="' + (d.page + 1) + '"' + (d.page >= d.pages - 1 ? ' disabled' : '') + '>&rsaquo;</button>';
+  }
+
   function render(d) {
+    renderTopo(d.graph || []);
+    renderPager(d);
     for (const el of grid.querySelectorAll('.body')) {
       scrollMemory[el.id] = { top: el.scrollTop, atEnd: el.scrollHeight - el.scrollTop - el.clientHeight < 24 };
     }
@@ -486,6 +611,23 @@ export class WorkspacePanel {
     if (act) { api.postMessage({ type: act.dataset.act, id: act.dataset.id }); return; }
     const head = e.target.closest('[data-focus]');
     if (head) { api.postMessage({ type: 'focus', id: head.dataset.focus }); }
+  });
+
+  pager.addEventListener('click', e => {
+    const b = e.target.closest('[data-page]');
+    if (b && !b.disabled) api.postMessage({ type: 'page', page: Number(b.dataset.page) });
+  });
+
+  topo.addEventListener('click', e => {
+    const n = e.target.closest('.node');
+    if (n) api.postMessage({ type: 'focus', id: n.dataset.id });
+  });
+
+  // The topology stretches to the panel, so it has to be redrawn on resize.
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => api.postMessage({ type: 'ready' }), 120);
   });
 
   window.addEventListener('message', e => {

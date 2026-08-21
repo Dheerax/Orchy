@@ -12,6 +12,7 @@ import {
   WorktreeManager,
 } from './core/worktreeManager';
 import { DaemonServer } from './daemon/server';
+import { TranscriptDocumentProvider, TRANSCRIPT_SCHEME } from './ui/transcriptDocument';
 import { WorkspacePanel } from './ui/workspacePanel';
 import { SessionTreeProvider } from './ui/sessionTree';
 
@@ -33,6 +34,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Before anything reads state: this window owns no terminals and no backend
   // handles, whatever the log says a previous window was doing.
   registry.reconcileForFreshWindow();
+
+  const transcripts = new TranscriptDocumentProvider(registry, backend, (id) =>
+    orchestrator.handleOf(id)
+  );
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(TRANSCRIPT_SCHEME, transcripts)
+  );
 
   const output = vscode.window.createOutputChannel('Orchy');
   const tree = new SessionTreeProvider(registry);
@@ -118,10 +126,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('orchy.showGraph', () => WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id))),
+    vscode.commands.registerCommand('orchy.openTranscript', async (id?: string, side?: boolean) => {
+      const target = typeof id === 'string' ? id : await pick('Open which transcript?');
+      if (!target) {
+        return;
+      }
+      const doc = await vscode.workspace.openTextDocument(
+        TranscriptDocumentProvider.uriFor(target)
+      );
+      await vscode.window.showTextDocument(doc, {
+        preview: false,
+        viewColumn: side ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active,
+      });
+      await vscode.languages.setTextDocumentLanguage(doc, 'markdown');
+    }),
 
-
-
+    vscode.commands.registerCommand('orchy.showGraph', () =>
+      WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id))
+    ),
 
     vscode.commands.registerCommand('orchy.focusSession', (arg?: unknown) => {
       const id = idOf(arg);
