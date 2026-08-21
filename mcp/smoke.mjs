@@ -75,15 +75,18 @@ check('server identifies itself', init?.result?.serverInfo?.name, 'orchy-mcp');
 const names = (list?.result?.tools ?? []).map((t) => t.name).sort();
 check('all tools are listed', names, [
   'orchy_archive',
+  'orchy_fork',
   'orchy_guide',
   'orchy_interrupt',
   'orchy_kill',
   'orchy_list',
   'orchy_merge',
   'orchy_plan',
+  'orchy_relay',
   'orchy_send',
   'orchy_spawn',
   'orchy_status',
+  'orchy_templates',
   'orchy_verify',
   'orchy_wait',
 ]);

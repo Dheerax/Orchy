@@ -89,6 +89,48 @@ export class Planner {
       }
     }
 
+    warnings.push(...this.predictConflicts(agents));
+    return warnings;
+  }
+
+  /**
+   * Agents that will fight over the same file.
+   *
+   * Worktrees keep them from stepping on each other while they work, and hand
+   * you the collision at merge time instead. Catching it here costs a line of
+   * text; catching it there costs a manual three-way merge of code written by
+   * two agents that never saw each other's version.
+   *
+   * Only flags siblings — if one depends on the other, the second inherits the
+   * first's work and editing the same file is exactly what it is supposed to do.
+   */
+  private static predictConflicts(agents: PlannedAgent[]): string[] {
+    const warnings: string[] = [];
+    const filesOf = (a: PlannedAgent): Set<string> =>
+      new Set(
+        [
+          ...a.deliverables.filter((d) => d.kind === 'file').map((d) => d.spec),
+          ...a.provides.map((p) => p.file),
+        ].map((f) => f.replace(/\\/g, '/').replace(/^\.\//, ''))
+      );
+
+    for (let i = 0; i < agents.length; i++) {
+      for (let j = i + 1; j < agents.length; j++) {
+        const related =
+          this.dependencyClosure(agents, i).has(j) || this.dependencyClosure(agents, j).has(i);
+        if (related) {
+          continue;
+        }
+        const shared = [...filesOf(agents[i])].filter((f) => filesOf(agents[j]).has(f));
+        if (shared.length > 0) {
+          warnings.push(
+            `${agents[i].role} and ${agents[j].role} both write ${shared.join(', ')} and ` +
+              `neither depends on the other — they will conflict at merge. Make one depend on ` +
+              `the other, or give the file to one of them.`
+          );
+        }
+      }
+    }
     return warnings;
   }
 

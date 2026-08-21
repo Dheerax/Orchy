@@ -32,7 +32,14 @@ function agent(over: Partial<PlannedAgent> = {}): PlannedAgent {
 
 console.log('\nplan validation');
 
-check('a clean plan warns about nothing', Planner.validate([agent(), agent({ role: 'y' })]), []);
+check(
+  'a clean plan warns about nothing',
+  Planner.validate([
+    agent({ deliverables: [{ kind: 'file', spec: 'a.ts', verified: false }] }),
+    agent({ role: 'y', deliverables: [{ kind: 'file', spec: 'b.ts', verified: false }] }),
+  ]),
+  []
+);
 
 const unmet = Planner.validate([agent({ role: 'api', needs: ['User'] })]);
 ok(
@@ -84,6 +91,42 @@ const noDeliverables = Planner.validate([agent({ deliverables: [] })]);
 ok(
   'an agent with no deliverables is caught',
   noDeliverables.some((w) => w.includes('never be verified'))
+);
+
+console.log('\nconflict prediction');
+
+const collide = Planner.validate([
+  agent({ role: 'a', deliverables: [{ kind: 'file', spec: 'src/app.ts', verified: false }] }),
+  agent({ role: 'b', deliverables: [{ kind: 'file', spec: 'src/app.ts', verified: false }] }),
+]);
+ok(
+  'two siblings writing one file is caught',
+  collide.some((w) => w.includes('will conflict at merge'))
+);
+
+const chained = Planner.validate([
+  agent({ role: 'a', deliverables: [{ kind: 'file', spec: 'src/app.ts', verified: false }] }),
+  agent({
+    role: 'b',
+    dependsOn: [0],
+    deliverables: [{ kind: 'file', spec: 'src/app.ts', verified: false }],
+  }),
+]);
+check('a dependent editing the same file is fine', chained, []);
+
+const differentFiles = Planner.validate([
+  agent({ role: 'a', deliverables: [{ kind: 'file', spec: 'src/a.ts', verified: false }] }),
+  agent({ role: 'b', deliverables: [{ kind: 'file', spec: 'src/b.ts', verified: false }] }),
+]);
+check('different files do not warn', differentFiles, []);
+
+const viaProvides = Planner.validate([
+  agent({ role: 'a', provides: [{ symbol: 'X', file: 'src/shared.ts' }] }),
+  agent({ role: 'b', provides: [{ symbol: 'Y', file: './src/shared.ts' }] }),
+]);
+ok(
+  'contract files count too, and paths normalise',
+  viaProvides.some((w) => w.includes('src/shared.ts'))
 );
 
 console.log('\napproval');

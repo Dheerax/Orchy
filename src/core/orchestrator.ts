@@ -552,6 +552,55 @@ export class Orchestrator extends EventEmitter {
     return adopted;
   }
 
+  /**
+   * Start a fresh session from another session's work, with a corrected task.
+   *
+   * When an agent goes wrong the useful move is rarely to start over — most of
+   * what it did was fine. Forking keeps its commits and gives the replacement a
+   * better instruction, which is cheaper than re-deriving the good part and
+   * safer than arguing with a session that has already convinced itself.
+   */
+  async fork(sourceId: string, task: string, deliverables?: Deliverable[]): Promise<Session> {
+    const source = this.registry.get(sourceId);
+    if (!source) {
+      throw new Error(`No session '${sourceId}' to fork.`);
+    }
+    if (!source.worktree) {
+      throw new Error(`Session '${sourceId}' has no worktree, so there is nothing to fork from.`);
+    }
+
+    const id = this.nextId(source.role);
+    const worktree = this.worktrees.createFrom(id, source.worktree.branch);
+
+    this.registry.record({
+      type: 'spawned',
+      session: id,
+      name: `${source.name} (fork)`,
+      role: source.role,
+      task,
+      backend: { type: this.backend.id, handle: '', model: source.backend.model },
+      worktree,
+      deliverables: deliverables ?? source.deliverables.map((d) => ({ ...d, verified: false })),
+      contract: source.contract,
+      dependsOn: [],
+      agreement: source.agreement,
+    });
+    this.registry.record({
+      type: 'message',
+      session: sourceId,
+      to: id,
+      summary: 'forked',
+    });
+
+    await this.start(id, { role: source.role, task, model: source.backend.model });
+    const session = this.registry.get(id);
+    if (!session) {
+      throw new Error(`fork ${id} vanished immediately after spawn`);
+    }
+    this.emit('spawned', session);
+    return session;
+  }
+
   /** Backend handle for a session spawned in this window, if any. */
   handleOf(id: string): BackendHandle | undefined {
     return this.handles.get(id);
@@ -586,6 +635,48 @@ export class Orchestrator extends EventEmitter {
     } catch {
       // Usage is informational; never fail an operation over it.
     }
+  }
+
+  /**
+   * Pass a question from one agent to another, and record that it happened.
+   *
+   * Agents cannot reach each other directly, and should not: unmediated chatter
+   * between agents burns tokens and drifts off-task. Routing through here keeps
+   * the orchestrator in the loop, and makes coordination something the pipeline
+   * can show rather than something that happens invisibly.
+   */
+  async relay(from: string, to: string, question: string): Promise<void> {
+    const asker = this.registry.get(from);
+    const target = this.registry.get(to);
+    if (!asker) {
+      throw new Error(`No session '${from}' to ask on behalf of.`);
+    }
+    if (!target) {
+      throw new Error(`No session '${to}' to ask.`);
+    }
+    if (!this.handles.has(to)) {
+      throw new Error(`Session '${to}' is not connected in this window.`);
+    }
+
+    this.registry.record({
+      type: 'message',
+      session: from,
+      to,
+      summary: question.slice(0, 160),
+    });
+
+    await this.send(
+      to,
+      `A question from ${asker.id} (${asker.role}), which is working on: ${asker.task}
+
+` +
+        `${question}
+
+` +
+        `Answer it directly. Do not change any files to answer — if the answer requires a ` +
+        `change, say so instead of making it, because ${asker.id} is working in its own branch.`
+    );
+    this.emit('relayed', { from, to });
   }
 
   async send(id: string, text: string): Promise<void> {

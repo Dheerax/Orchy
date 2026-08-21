@@ -5,6 +5,7 @@ import { DeliverableVerifier } from './core/deliverableVerifier';
 import { EventLog } from './core/eventLog';
 import { Orchestrator } from './core/orchestrator';
 import { Planner } from './core/planner';
+import { TemplateLibrary } from './core/templates';
 import { SessionRegistry } from './core/sessionRegistry';
 import { Session } from './core/types';
 import {
@@ -158,6 +159,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         viewColumn: side ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active,
       });
       await vscode.languages.setTextDocumentLanguage(doc, 'markdown');
+    }),
+
+    vscode.commands.registerCommand('orchy.seedTemplates', async () => {
+      const dir = new TemplateLibrary(orchyDir).seed();
+      void vscode.window.showInformationMessage(
+        `Orchy: example templates written to ${dir}. Edit or add .json files there and they ` +
+          `appear alongside the built-in shapes.`
+      );
+      const doc = await vscode.workspace.openTextDocument(
+        vscode.Uri.file(path.join(dir, 'feature.example.json'))
+      );
+      await vscode.window.showTextDocument(doc, { preview: false });
     }),
 
     vscode.commands.registerCommand('orchy.showGraph', () =>

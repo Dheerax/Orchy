@@ -22,6 +22,17 @@ warnings alongside it. Fix what it finds before proposing again.
 Do not spawn agents one at a time for a multi-agent job. The user then finds out
 what you decided only after it is already running, which is the wrong order.
 
+## 0b. Start from a known shape
+
+Unsure how to split the work? Call `orchy_templates`. It returns decompositions
+that fit common situations — one agent, a feature crossing layers, independent
+changes, research-then-build, a staged migration — with guidance on when each
+one applies.
+
+They are shapes, not scripts. Adapt the tasks, fill in deliverables and
+contracts, then propose the result. Picking a known shape is more reliable than
+inventing one under time pressure.
+
 ## 1. Decompose by ownership, not by task list
 
 Split work so that **two agents rarely need the same file**. Split by area —
@@ -142,7 +153,25 @@ conflict — that is git telling you the decomposition in step 1 was wrong.
 Agents are instructed to commit their own work. If a merge complains about
 uncommitted changes, the agent stopped early; send it back rather than forcing.
 
-## 9. Finish cleanly
+## 9. When an agent goes wrong, fork it
+
+Most of what a stuck agent did is usually fine. `orchy_fork` starts a new session
+from its commits with a corrected instruction, rather than discarding the good
+part or arguing with a session that has already convinced itself of an approach.
+
+Restate the task; do not just repeat it louder.
+
+## 10. Ask one agent on behalf of another
+
+If an agent needs something only another knows — a field name, a signature, a
+decision already taken — use `orchy_relay`. The question goes to the other
+session and the exchange is recorded.
+
+Agents cannot talk to each other directly, deliberately. Unmediated chatter burns
+tokens and drifts off-task, and routing through you keeps coordination visible
+rather than something that happened invisibly between two sessions.
+
+## 11. Finish cleanly
 
 - `orchy_archive` — done with it; removes the worktree, keeps the branch and transcript
 - `orchy_kill` — stop it now; keeps everything for inspection

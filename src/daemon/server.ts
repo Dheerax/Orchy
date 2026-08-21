@@ -4,6 +4,7 @@ import * as http from 'http';
 import * as path from 'path';
 import { Orchestrator, SpawnRequest } from '../core/orchestrator';
 import { SessionRegistry } from '../core/sessionRegistry';
+import { TemplateLibrary } from '../core/templates';
 import { NEEDS_ATTENTION } from '../core/types';
 
 interface Handshake {
@@ -39,7 +40,8 @@ export class DaemonServer {
     private readonly orchestrator: Orchestrator,
     private readonly orchyDir: string,
     private readonly workspaceRoot: string,
-    private readonly version: string
+    private readonly version: string,
+    private readonly templates = new TemplateLibrary(orchyDir)
   ) {}
 
   /** Set by the extension so a proposed plan can surface in the UI immediately. */
@@ -150,6 +152,26 @@ export class DaemonServer {
         return summarize(session);
       }
 
+      case '/templates':
+        return {
+          templates: this.templates.all().map((t) => ({
+            name: t.name,
+            description: t.description,
+            use_when: t.useWhen,
+            built_in: t.builtIn,
+            agents: t.agents.map((a, i) => ({
+              index: i,
+              role: a.role,
+              task: a.task,
+              depends_on: a.dependsOn,
+              owns: a.owns,
+            })),
+          })),
+          note:
+            'These are decompositions, not scripts. Adapt the tasks to the actual request, ' +
+            'fill in deliverables and contracts, then propose the result with orchy_plan.',
+        };
+
       case '/plan': {
         const agents = Array.isArray(body.agents) ? body.agents : [];
         const plan = this.orchestrator.planner.propose(
@@ -213,6 +235,35 @@ export class DaemonServer {
           Array.isArray(body.session_ids) ? body.session_ids.map(String) : undefined,
           typeof body.timeout_seconds === 'number' ? body.timeout_seconds : 300
         );
+
+      case '/fork': {
+        const raw = Array.isArray(body.deliverables) ? body.deliverables : undefined;
+        const session = await this.orchestrator.fork(
+          String(body.session_id ?? ''),
+          String(body.task ?? ''),
+          raw?.map((d) => {
+            const entry = d as Record<string, unknown>;
+            const kind = String(entry.kind ?? 'file');
+            return {
+              kind: (kind === 'glob' || kind === 'command' ? kind : 'file') as
+                | 'file'
+                | 'glob'
+                | 'command',
+              spec: String(entry.spec ?? ''),
+              verified: false,
+            };
+          })
+        );
+        return summarize(session);
+      }
+
+      case '/relay':
+        await this.orchestrator.relay(
+          String(body.from ?? ''),
+          String(body.to ?? ''),
+          String(body.question ?? '')
+        );
+        return { ok: true };
 
       case '/interrupt':
         await this.orchestrator.interrupt(String(body.session_id ?? ''), String(body.reason ?? ''));

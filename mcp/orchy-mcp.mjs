@@ -117,6 +117,16 @@ const TOOLS = [
     },
   },
   {
+    name: 'orchy_templates',
+    description:
+      'Pipeline shapes to start from, with guidance on when each one fits. Read this before ' +
+      'planning if you are unsure how to decompose the work — picking a known shape is more ' +
+      'reliable than inventing one. They are decompositions rather than scripts: adapt the ' +
+      'tasks, add deliverables and contracts, then propose with orchy_plan.',
+    inputSchema: { type: 'object', properties: {} },
+    route: '/templates',
+  },
+  {
     name: 'orchy_plan',
     description:
       'Propose a pipeline and wait for the user to approve it. THIS IS THE NORMAL WAY TO ' +
@@ -274,6 +284,26 @@ const TOOLS = [
     route: '/send',
   },
   {
+    name: 'orchy_relay',
+    description:
+      'Ask one agent a question on behalf of another, and record the exchange. Use this when ' +
+      'an agent needs something only another agent knows — a field name, a signature, a ' +
+      'decision already made. The answer lands in the answering transcript; read ' +
+      'it with orchy_status or the panel. Agents cannot talk to each other directly by ' +
+      'design: unmediated chatter burns tokens and drifts, and routing through you keeps ' +
+      'coordination visible.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'Session the question is on behalf of.' },
+        to: { type: 'string', description: 'Session being asked.' },
+        question: { type: 'string' },
+      },
+      required: ['from', 'to', 'question'],
+    },
+    route: '/relay',
+  },
+  {
     name: 'orchy_verify',
     description:
       'Re-check a session\'s deliverables. This is the only way a session becomes "complete" — ' +
@@ -284,6 +314,24 @@ const TOOLS = [
       required: ['session_id'],
     },
     route: '/verify',
+  },
+  {
+    name: 'orchy_fork',
+    description:
+      'Start a new session from the work of an existing one, with a corrected task. Use when ' +
+      'an agent went wrong partway: its commits are kept and the replacement starts from them ' +
+      'with better instructions. Cheaper than starting over, and more reliable than arguing ' +
+      'with a session that has already talked itself into an approach.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session to fork from.' },
+        task: { type: 'string', description: 'The corrected instruction.' },
+        deliverables: DELIVERABLES_SCHEMA,
+      },
+      required: ['session_id', 'task'],
+    },
+    route: '/fork',
   },
   {
     name: 'orchy_interrupt',

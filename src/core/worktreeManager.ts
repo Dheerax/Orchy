@@ -314,6 +314,20 @@ export class WorktreeManager {
       .filter((p) => !tracked.has(path.resolve(p)));
   }
 
+  /** Create a worktree branched from another agent's branch rather than from base. */
+  createFrom(sessionId: string, sourceBranch: string): WorktreeRef {
+    const branch = `agent/${sessionId}`;
+    const repoName = path.basename(this.repoRoot);
+    const wtPath = path.resolve(this.repoRoot, '..', `${repoName}-${sessionId}`);
+    if (fs.existsSync(wtPath)) {
+      throw new Error(`Worktree path already exists: ${wtPath}`);
+    }
+    const sha = this.git(['rev-parse', sourceBranch]);
+    this.git(['worktree', 'add', wtPath, '-b', branch, sha]);
+    this.bootstrap(wtPath);
+    return { path: wtPath, branch, baseRef: sourceBranch, baseSha: sha };
+  }
+
   /**
    * Merge another agent's branch into this worktree.
    *
