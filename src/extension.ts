@@ -15,6 +15,7 @@ import {
 } from './core/worktreeManager';
 import { DaemonServer } from './daemon/server';
 import { TranscriptDocumentProvider, TRANSCRIPT_SCHEME } from './ui/transcriptDocument';
+import { GraphPanel } from './ui/graphPanel';
 import { WorkspacePanel } from './ui/workspacePanel';
 import { SessionTreeProvider } from './ui/sessionTree';
 
@@ -160,6 +161,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
       await vscode.languages.setTextDocumentLanguage(doc, 'markdown');
     }),
+
+    vscode.commands.registerCommand('orchy.showPipeline', () => GraphPanel.show(registry)),
 
     vscode.commands.registerCommand('orchy.seedTemplates', async () => {
       const dir = new TemplateLibrary(orchyDir).seed();

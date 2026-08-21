@@ -116,6 +116,27 @@ check('a new window frees every slot', reg.visible().length, 0);
 check('and stops trusting "running"', reg.get('api-1')?.status, 'detached');
 check('finished sessions are left alone', reg.get('ui-1')?.status, 'complete');
 
+console.log('\nhistory and coordination edges');
+
+reg.record({ type: 'merged', session: 'ui-1', branch: 'agent/ui-1', into: 'main' });
+reg.record({ type: 'message', session: 'ui-1', to: 'api-1', summary: 'what is the field called?' });
+reg.record({ type: 'message', session: 'api-1', to: 'ui-1', summary: 'forked' });
+
+const hist = reg.history(20);
+check(
+  'history includes the merge',
+  hist.some((e) => e.type === 'merged'),
+  true
+);
+check(
+  'history excludes tool noise',
+  hist.every((e) => e.type !== 'tool'),
+  true
+);
+check('messages are exposed separately', reg.messages(10).length, 2);
+check('newest message first', reg.messages(10)[0].summary, 'forked');
+check('a merge does not change session status', reg.get('ui-1')?.status, 'complete');
+
 console.log('\ncorrupt log tolerance');
 
 fs.appendFileSync(path.join(dir, 'events.jsonl'), '{"broken": tru\n', 'utf8');

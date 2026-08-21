@@ -84,6 +84,15 @@ export class SessionRegistry extends EventEmitter {
       .slice(0, limit);
   }
 
+  /** Relay and fork edges, newest first — how agents actually coordinated. */
+  messages(limit = 120): Extract<OrchyEvent, { type: 'message' }>[] {
+    return this.log
+      .tail(800)
+      .filter((e): e is Extract<OrchyEvent, { type: 'message' }> => e.type === 'message')
+      .reverse()
+      .slice(0, limit);
+  }
+
   /** Sessions a human needs to look at right now. Drives the sidebar badge. */
   needingAttention(): Session[] {
     return this.all().filter((s) => NEEDS_ATTENTION.has(s.status));

@@ -115,7 +115,8 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<Node> {
       const item = new vscode.TreeItem('History', vscode.TreeItemCollapsibleState.Collapsed);
       item.iconPath = new vscode.ThemeIcon('git-merge');
       item.contextValue = 'orchyHistory';
-      item.tooltip = 'What agents produced and when it merged';
+      item.tooltip = 'What agents produced and when it merged. Click to open the pipeline graph.';
+      item.command = { command: 'orchy.showPipeline', title: 'Open pipeline graph' };
       return item;
     }
 
