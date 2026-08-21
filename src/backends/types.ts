@@ -35,6 +35,13 @@ export interface BackendCapabilities {
   checkpoints: boolean;
 }
 
+/** One turn in a session, flattened for display. */
+export interface TranscriptEntry {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  parts: { kind: 'text' | 'reasoning' | 'tool'; text: string }[];
+}
+
 /**
  * The public contract for adding an agent backend.
  *
@@ -65,4 +72,16 @@ export interface AgentBackend {
    * the grid renders a read-only transcript instead.
    */
   attachCommand(handle: BackendHandle): { command: string; args: string[] } | undefined;
+
+  /**
+   * The session's conversation so far, oldest first.
+   *
+   * Orchy renders this itself rather than relying on a backend's own TUI to
+   * replay history — an attached TUI that shows an empty prompt while the agent
+   * is demonstrably working is worse than no pane at all.
+   */
+  transcript?(handle: BackendHandle): Promise<TranscriptEntry[]>;
+
+  /** Tokens and cost so far, summed from the transcript. */
+  usage?(handle: BackendHandle): Promise<{ tokensUsed: number; costEstimate: number }>;
 }

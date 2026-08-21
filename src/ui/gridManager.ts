@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { AgentBackend, BackendHandle } from '../backends/types';
 import { SessionRegistry } from '../core/sessionRegistry';
 import { Session } from '../core/types';
+import { TranscriptPane } from './transcriptPane';
 import {
   columnForIndex,
   MAX_VISIBLE,
@@ -50,6 +51,11 @@ export class GridManager implements vscode.Disposable {
     this.disposables.push(
       vscode.window.onDidCloseTerminal((terminal) => this.onTerminalClosed(terminal))
     );
+  }
+
+  /** Whether panes run the backend's own TUI instead of Orchy's transcript view. */
+  private get useBackendTui(): boolean {
+    return vscode.workspace.getConfiguration('orchy').get<boolean>('useBackendTui', false);
   }
 
   private get capacity(): number {
@@ -133,7 +139,17 @@ export class GridManager implements vscode.Disposable {
         return;
       }
 
-      await vscode.commands.executeCommand('vscode.setEditorLayout', toEditorLayout(plan));
+      try {
+        await vscode.commands.executeCommand('vscode.setEditorLayout', toEditorLayout(plan));
+      } catch (err) {
+        // Keep going: terminals still open, just in whatever layout exists.
+        // Silently aborting here would tear down every pane and show nothing.
+        this.log(
+          `layout for ${ids.length} agent(s) rejected: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
 
       ids.forEach((id, index) => {
         const session = this.registry.get(id);
@@ -141,26 +157,37 @@ export class GridManager implements vscode.Disposable {
         if (!session || !handle) {
           return;
         }
-        const attach = this.backend.attachCommand(handle);
-        if (!attach) {
-          return;
-        }
         const column = columnForIndex(plan, index);
-        this.log(`[${id}] column ${column}: ${attach.command} ${attach.args.join(' ')}`);
-
-        const terminal = vscode.window.createTerminal({
+        const common = {
           name: `${session.id} · ${session.role}`,
           location: { viewColumn: column as vscode.ViewColumn, preserveFocus: true },
-          cwd: session.worktree?.path,
-          shellPath: attach.command,
-          shellArgs: attach.args,
           iconPath: new vscode.ThemeIcon('robot'),
           color: new vscode.ThemeColor(STATUS_COLORS[session.status] ?? 'terminal.ansiBlue'),
-          isTransient: true,
-          // shellPath bypasses the user's shell, so no profile runs. A TUI that
-          // cannot identify the terminal may refuse to draw.
-          env: { TERM: 'xterm-256color' },
-        });
+        };
+
+        let options: vscode.TerminalOptions | vscode.ExtensionTerminalOptions;
+        if (this.useBackendTui) {
+          const attach = this.backend.attachCommand(handle);
+          if (!attach) {
+            return;
+          }
+          this.log(`[${id}] column ${column}: ${attach.command} ${attach.args.join(' ')}`);
+          options = {
+            ...common,
+            cwd: session.worktree?.path,
+            shellPath: attach.command,
+            shellArgs: attach.args,
+            isTransient: true,
+            // shellPath bypasses the user's shell, so no profile runs. A TUI
+            // that cannot identify the terminal may refuse to draw.
+            env: { TERM: 'xterm-256color' },
+          };
+        } else {
+          this.log(`[${id}] column ${column}: transcript pane`);
+          options = { ...common, pty: new TranscriptPane(this.backend, handle, id) };
+        }
+
+        const terminal = vscode.window.createTerminal(options);
         // Creating a terminal does not surface it; without this it can sit as a
         // background tab, indistinguishable from never having opened.
         terminal.show(true);

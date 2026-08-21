@@ -9,6 +9,23 @@ export class GitError extends Error {
   }
 }
 
+/**
+ * The worktree was deregistered from git, but its folder could not be deleted.
+ *
+ * Common on Windows: an editor tab or terminal still holds the directory open,
+ * so the delete fails after git has already dropped its registration. Reporting
+ * the raw permission error hides the fact that the state is now split.
+ */
+export class WorktreeLockedError extends Error {
+  constructor(readonly worktreePath: string, readonly cause: string) {
+    super(
+      `Removed '${worktreePath}' from git, but the folder itself is locked and could not be ` +
+        `deleted. Close any editor tab or terminal still using it, then delete it manually or ` +
+        `run "Orchy: Prune Orphaned Worktrees". Underlying error: ${cause}`
+    );
+  }
+}
+
 export class WorktreeDirtyError extends Error {
   constructor(readonly worktreePath: string, readonly changes: string[]) {
     super(
@@ -193,8 +210,20 @@ export class WorktreeManager {
     }
   }
 
-  /** Uncommitted changes in a worktree, as porcelain lines. Empty means clean. */
+  /** True while the path is still a live git worktree. */
+  isWorktree(worktreePath: string): boolean {
+    return fs.existsSync(path.join(worktreePath, '.git'));
+  }
+
+  /**
+   * Uncommitted changes in a worktree, as porcelain lines. Empty means clean.
+   * A folder git no longer tracks reports clean rather than throwing "not a git
+   * repository", so a retry after a partial removal can still finish the job.
+   */
   dirtyFiles(worktreePath: string): string[] {
+    if (!this.isWorktree(worktreePath)) {
+      return [];
+    }
     return this.git(['status', '--porcelain'], worktreePath)
       .split('\n')
       .map((l) => l.trim())
@@ -219,7 +248,20 @@ export class WorktreeManager {
       (w) => path.resolve(w.path) === path.resolve(worktreePath)
     )?.branch;
 
-    this.git(['worktree', 'remove', ...(opts.force ? ['--force'] : []), worktreePath]);
+    try {
+      this.git(['worktree', 'remove', ...(opts.force ? ['--force'] : []), worktreePath]);
+    } catch (err) {
+      // git may have deregistered the worktree and then failed to delete the
+      // directory. Prune so git's own view is consistent, then say plainly which
+      // half succeeded instead of surfacing a bare permission error.
+      this.prune();
+      if (fs.existsSync(worktreePath)) {
+        throw new WorktreeLockedError(
+          worktreePath,
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+    }
 
     // Removing a worktree leaves its branch behind. Keep it by default — it is
     // the only remaining record of what the agent did — and delete it only when

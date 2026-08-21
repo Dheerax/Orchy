@@ -13,6 +13,24 @@ export interface OpenCodeEvent {
   [key: string]: unknown;
 }
 
+export interface OpenCodeMessagePart {
+  type: string;
+  text?: string;
+  name?: string;
+  [key: string]: unknown;
+}
+
+export interface OpenCodeMessage {
+  id: string;
+  type: string;
+  agent?: string;
+  model?: { id?: string };
+  content?: OpenCodeMessagePart[];
+  tokens?: { input?: number; output?: number };
+  cost?: number;
+  [key: string]: unknown;
+}
+
 export interface OpenCodeSession {
   id: string;
   [key: string]: unknown;
@@ -82,6 +100,15 @@ export class OpenCodeClient {
   async listSessions(): Promise<OpenCodeSession[]> {
     const wrapped = await this.req<{ data: OpenCodeSession[] }>('GET', '/api/session');
     return wrapped.data;
+  }
+
+  /** Full transcript for a session. Newest first, as the server returns it. */
+  async messages(sessionId: string): Promise<OpenCodeMessage[]> {
+    const wrapped = await this.req<{ data: OpenCodeMessage[] }>(
+      'GET',
+      `/api/session/${sessionId}/message`
+    );
+    return wrapped.data ?? [];
   }
 
   async pendingPermissions(sessionId: string): Promise<unknown[]> {

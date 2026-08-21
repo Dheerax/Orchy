@@ -6,7 +6,11 @@ import { EventLog } from './core/eventLog';
 import { Orchestrator } from './core/orchestrator';
 import { SessionRegistry } from './core/sessionRegistry';
 import { Session } from './core/types';
-import { WorktreeDirtyError, WorktreeManager } from './core/worktreeManager';
+import {
+  WorktreeDirtyError,
+  WorktreeLockedError,
+  WorktreeManager,
+} from './core/worktreeManager';
 import { DaemonServer } from './daemon/server';
 import { GraphPanel } from './ui/graphPanel';
 import { GridManager } from './ui/gridManager';
@@ -23,9 +27,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const config = vscode.workspace.getConfiguration('orchy');
   const worktrees = new WorktreeManager(root);
   const registry = new SessionRegistry(new EventLog(orchyDir));
-  const backend = new OpenCodeBackend(undefined, {
-    mini: config.get<boolean>('miniTui', true),
-  });
+  const backend = new OpenCodeBackend(undefined, { mini: true });
   const orchestrator = new Orchestrator(registry, worktrees, backend, new DeliverableVerifier(), {
     baseBranch: config.get<string>('baseBranch', 'main'),
   });
@@ -334,6 +336,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await orchestrator.archive(target);
         grid.detach(target);
       } catch (err) {
+        if (err instanceof WorktreeLockedError) {
+          // Half-done rather than failed: git no longer tracks it, the folder
+          // survives. Say that, and let the session leave the list regardless.
+          grid.detach(target);
+          registry.record({ type: 'archived', session: target });
+          void vscode.window.showWarningMessage(err.message, 'Prune worktrees').then((choice) => {
+            if (choice) {
+              void vscode.commands.executeCommand('orchy.pruneWorktrees');
+            }
+          });
+          return;
+        }
         if (!(err instanceof WorktreeDirtyError)) {
           fail(err);
           return;

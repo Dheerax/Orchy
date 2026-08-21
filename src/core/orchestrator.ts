@@ -144,7 +144,13 @@ export class Orchestrator extends EventEmitter {
       for (const d of deliverables) {
         lines.push(`  - [${d.kind}] ${d.spec}`);
       }
-      lines.push('', 'Do not report completion before producing them.');
+      lines.push(
+        '',
+        'Do not report completion before producing them.',
+        'When they are all in place, commit your work on this branch:',
+        '  git add -A && git commit -m "<short summary>"',
+        'Leaving changes uncommitted blocks the merge back to main.'
+      );
     }
     return lines.join('\n');
   }
@@ -164,6 +170,7 @@ export class Orchestrator extends EventEmitter {
             error: event.error,
           });
           if (event.status === 'idle_unverified') {
+            void this.refreshUsage(id);
             void this.verify(id);
           }
           break;
@@ -229,6 +236,14 @@ export class Orchestrator extends EventEmitter {
         detail: r.detail,
       });
     }
+    if (results.length > 0 && results.every((r) => r.verified)) {
+      // Ask for completion explicitly. Deliverables alone only promote a session
+      // already parked at idle_unverified, so a session still marked running
+      // would otherwise verify all-green and never change status.
+      this.registry.record({ type: 'status', session: id, status: 'complete' });
+    }
+    await this.refreshUsage(id);
+
     const after = this.registry.get(id);
     // Always announce the outcome, not just success — the auto-verify triggered
     // by a backend going idle is fire-and-forget, so this is the only signal a
@@ -243,6 +258,37 @@ export class Orchestrator extends EventEmitter {
   /** Backend handle for a session spawned in this window, if any. */
   handleOf(id: string): BackendHandle | undefined {
     return this.handles.get(id);
+  }
+
+  /**
+   * Pull tokens and cost from the backend.
+   *
+   * Usage never arrived as events, so spend sat at zero for every session from
+   * spawn through completion — which quietly made budget caps unenforceable.
+   */
+  private async refreshUsage(id: string): Promise<void> {
+    const handle = this.handles.get(id);
+    if (!handle || !this.backend.usage) {
+      return;
+    }
+    try {
+      const usage = await this.backend.usage(handle);
+      const current = this.registry.get(id);
+      if (
+        current &&
+        (current.budget.tokensUsed !== usage.tokensUsed ||
+          current.budget.costEstimate !== usage.costEstimate)
+      ) {
+        this.registry.record({
+          type: 'budget',
+          session: id,
+          tokensUsed: usage.tokensUsed,
+          costEstimate: usage.costEstimate,
+        });
+      }
+    } catch {
+      // Usage is informational; never fail an operation over it.
+    }
   }
 
   async send(id: string, text: string): Promise<void> {

@@ -1,7 +1,14 @@
 import { execFile, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { AgentEvent, AgentBackend, BackendCapabilities, BackendHandle, SpawnOpts } from './types';
+import {
+  AgentEvent,
+  AgentBackend,
+  BackendCapabilities,
+  BackendHandle,
+  SpawnOpts,
+  TranscriptEntry,
+} from './types';
 import { OpenCodeClient, OpenCodeEvent } from './opencodeClient';
 
 const DEFAULT_PORT = 4096;
@@ -225,6 +232,50 @@ export class OpenCodeBackend implements AgentBackend {
           : []),
       ],
     };
+  }
+
+  /**
+   * The session's conversation, oldest first.
+   * The server returns newest-first, which reads backwards in a pane.
+   */
+  async transcript(handle: BackendHandle): Promise<TranscriptEntry[]> {
+    const messages = await this.client.messages(handle.id);
+    return [...messages].reverse().map((message) => ({
+      id: message.id,
+      role: message.type === 'user' ? 'user' : message.type === 'system' ? 'system' : 'assistant',
+      parts: (message.content ?? [])
+        .map((part) => {
+          if (part.type === 'text' && part.text) {
+            return { kind: 'text' as const, text: part.text };
+          }
+          if (part.type === 'reasoning' && part.text) {
+            return { kind: 'reasoning' as const, text: part.text };
+          }
+          if (part.type === 'tool') {
+            return { kind: 'tool' as const, text: part.name ?? 'tool' };
+          }
+          return undefined;
+        })
+        .filter((p): p is { kind: 'text' | 'reasoning' | 'tool'; text: string } => p !== undefined),
+    }));
+  }
+
+  /**
+   * Usage summed from the transcript.
+   *
+   * The session object carries `cost` and `tokens` fields, but they stay at zero
+   * even for sessions that have plainly done work — so they cannot be trusted as
+   * the source for a budget cap.
+   */
+  async usage(handle: BackendHandle): Promise<{ tokensUsed: number; costEstimate: number }> {
+    const messages = await this.client.messages(handle.id);
+    let tokensUsed = 0;
+    let costEstimate = 0;
+    for (const message of messages) {
+      tokensUsed += (message.tokens?.input ?? 0) + (message.tokens?.output ?? 0);
+      costEstimate += message.cost ?? 0;
+    }
+    return { tokensUsed, costEstimate };
   }
 
   dispose(): void {
