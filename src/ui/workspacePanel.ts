@@ -265,6 +265,18 @@ export class WorkspacePanel {
     --done: var(--vscode-charts-green, #89d185);
     --failed: var(--vscode-charts-red, #f14c4c);
     --mono: var(--vscode-editor-font-family, monospace);
+
+    /* Terminal surface, so a pane reads as a terminal rather than a text box. */
+    --term-bg: var(--vscode-terminal-background, var(--vscode-panel-background, #0c0c0c));
+    --term-fg: var(--vscode-terminal-foreground, var(--fg));
+    --term-green: var(--vscode-terminal-ansiGreen, #23d18b);
+    --term-cyan: var(--vscode-terminal-ansiCyan, #29b8db);
+    --term-yellow: var(--vscode-terminal-ansiYellow, #f5f543);
+    --term-dim: var(--vscode-terminal-ansiBrightBlack, #808080);
+
+    /* Set per snapshot: one agent gets a readable pane, twelve get a dense one. */
+    --pane-font: 12px;
+    --pane-line: 1.5;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -305,7 +317,8 @@ export class WorkspacePanel {
 
   .head {
     flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-    padding: 8px 10px; border-bottom: 1px solid var(--line); cursor: pointer;
+    padding: 6px 10px; border-bottom: 1px solid var(--line); cursor: pointer;
+    background: var(--card);
   }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
   .running .dot { background: var(--running); }
@@ -318,18 +331,37 @@ export class WorkspacePanel {
           border-radius: 99px; padding: 0 7px; }
   .spend { margin-left: auto; color: var(--muted); font-size: 10.5px; font-family: var(--mono); }
 
-  .body { flex: 1 1 auto; overflow-y: auto; padding: 8px 10px; font-family: var(--mono);
-          font-size: 11.5px; line-height: 1.5; min-height: 0; }
-  .turn { margin-bottom: 8px; }
-  .who { font-weight: 600; font-size: 10.5px; text-transform: lowercase; }
-  .who.assistant { color: var(--done); }
-  .who.user { color: var(--running); }
+  .body {
+    flex: 1 1 auto; overflow-y: auto; min-height: 0;
+    padding: 8px 10px;
+    background: var(--term-bg); color: var(--term-fg);
+    font-family: var(--mono);
+    font-size: var(--pane-font); line-height: var(--pane-line);
+    font-variant-ligatures: none; tab-size: 2;
+  }
+  .body::-webkit-scrollbar { width: 10px; }
+  .body::-webkit-scrollbar-thumb {
+    background: var(--vscode-scrollbarSlider-background); border-radius: 5px;
+  }
+  .turn { margin-bottom: .7em; }
+  .who { font-weight: 600; font-size: .88em; text-transform: lowercase; }
+  .who::before { content: '❯ '; opacity: .7; }
+  .who.assistant { color: var(--term-green); }
+  .who.user { color: var(--term-cyan); }
+  .who.system { color: var(--term-dim); }
   .text { white-space: pre-wrap; word-break: break-word; }
-  .reasoning { white-space: pre-wrap; word-break: break-word; color: var(--muted); }
-  .tool { color: var(--blocked); }
-  .waiting { color: var(--muted); font-style: italic; }
+  .reasoning { white-space: pre-wrap; word-break: break-word; color: var(--term-dim); }
+  .tool { color: var(--term-yellow); }
+  .waiting { color: var(--term-dim); font-style: italic; }
 
-  .foot { flex: 0 0 auto; border-top: 1px solid var(--line); padding: 6px 10px;
+  /* A live caret: the cheapest possible signal that a pane is not frozen. */
+  .caret { display: inline-block; width: .55em; height: 1em; vertical-align: text-bottom;
+           background: var(--term-green); animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+  body.vscode-reduce-motion .caret { animation: none; }
+
+  .foot { flex: 0 0 auto; border-top: 1px solid var(--line); padding: 5px 10px;
+          background: var(--card);
           display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
   .file { background: none; border: 1px solid var(--line); border-radius: 5px;
           color: var(--fg); font-family: var(--mono); font-size: 10.5px;
@@ -375,9 +407,11 @@ export class WorkspacePanel {
   }
 
   function cardHtml(s) {
+    const working = s.status === 'running' || s.status === 'spawning';
+    const caret = working ? '<span class="caret"></span>' : '';
     const body = s.transcript.length
-      ? s.transcript.map(turnHtml).join('')
-      : '<div class="waiting">waiting for the first turn…</div>';
+      ? s.transcript.map(turnHtml).join('') + caret
+      : '<div class="waiting">waiting for the first turn…' + caret + '</div>';
 
     const files = s.changes.map(c =>
       '<button class="file" data-id="' + esc(s.id) + '" data-file="' + esc(c.path) + '">' +
@@ -397,6 +431,15 @@ export class WorkspacePanel {
         '</span>' +
       '</div>' +
     '</div>';
+  }
+
+  // Type scales with how many panes share the space: one agent should be
+  // comfortably readable, twelve should still fit something worth reading.
+  function scaleType(n) {
+    const font = n <= 1 ? 14 : n === 2 ? 13 : n <= 4 ? 12.5 : n <= 6 ? 12 : n <= 9 ? 11 : 10.2;
+    const line = n <= 2 ? 1.6 : n <= 6 ? 1.5 : 1.42;
+    document.body.style.setProperty('--pane-font', font + 'px');
+    document.body.style.setProperty('--pane-line', String(line));
   }
 
   function render(d) {
@@ -419,6 +462,7 @@ export class WorkspacePanel {
 
     const shown = d.focused ? d.sessions.filter(s => s.id === d.focused) : d.sessions;
     const rows = d.focused ? [1] : d.rows;
+    scaleType(shown.length);
 
     let html = '', i = 0;
     for (const width of rows) {
