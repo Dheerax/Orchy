@@ -500,31 +500,43 @@ export class WorkspacePanel {
   #plan .warn { border-left: 2px solid var(--blocked); background: rgba(204,167,0,.08);
                 padding: 6px 10px; margin-bottom: 6px; font-size: 11.5px; }
   #plan .ptree { font-size: 12px; }
-  #plan .prow { padding: 3px 0; cursor: pointer; border-radius: 5px; }
-  #plan .prow:hover { background: var(--vscode-list-hoverBackground); }
-  #plan .line { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-  #plan .tw { color: var(--muted); font-family: var(--mono); }
+  #plan .prow { padding: 5px 8px; cursor: pointer; border-radius: 6px;
+                border: 1px solid transparent; }
+  #plan .prow:hover { background: var(--vscode-list-hoverBackground); border-color: var(--line); }
+  #plan .l1 { display: flex; gap: 8px; align-items: baseline; }
+  #plan .l2 { display: flex; gap: 10px; align-items: baseline; margin: 2px 0 0 22px; }
+  #plan .tw { color: var(--muted); font-family: var(--mono); flex: 0 0 auto; }
   #plan .pr { font-weight: 600; }
-  #plan .pm { font-family: var(--mono); font-size: 10px; color: var(--running); }
+  /* The model is reference, not headline: right-aligned so roles stay scannable. */
+  #plan .pm { font-family: var(--mono); font-size: 10px; color: var(--running);
+              margin-left: auto; opacity: .85; }
   #plan .pp { font-family: var(--mono); font-size: 10px; color: var(--done); }
   #plan .pn { font-family: var(--mono); font-size: 10px; color: var(--muted); }
   #plan .pv { font-family: var(--mono); font-size: 10px; color: var(--unverified);
-              margin-left: auto; }
-  /* The brief is the longest and least glanceable thing here: one line until asked for. */
-  #plan .ptask { color: var(--muted); font-size: 11px; margin-left: 22px;
+              margin-left: auto; opacity: .85; }
+  /* The brief is the longest thing here and the least glanceable: one line until asked for. */
+  #plan .ptask { color: var(--muted); font-size: 11px; margin: 3px 0 0 22px;
                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #plan .prow.open .ptask { white-space: pre-wrap; }
   /* The architecture, drawn. A list of agents is not a shape, and the shape is
      the thing being approved. */
-  #plan .arch { border: 1px solid var(--line); border-radius: 8px; padding: 8px;
-                margin-bottom: 10px; overflow-x: auto; background: var(--bg); }
-  #plan .arch svg { display: block; }
+  #plan .arch { position: relative; border: 1px solid var(--line); border-radius: 8px;
+                margin-bottom: 10px; background: var(--bg); height: 268px; overflow: hidden; }
+  #plan .arch svg { display: block; width: 100%; height: 100%; cursor: grab; }
+  #plan .arch svg.dragging { cursor: grabbing; }
+  #plan .archctl { position: absolute; top: 6px; right: 6px; display: flex; gap: 3px; z-index: 2; }
+  #plan .archctl button { width: 22px; height: 22px; padding: 0; line-height: 1;
+                          background: var(--card); border: 1px solid var(--line);
+                          border-radius: 5px; color: var(--muted); cursor: pointer;
+                          font-size: 12px; }
+  #plan .archctl button:hover { color: var(--fg); border-color: var(--running); }
   #plan .arch .stagelabel { font-size: 9.5px; fill: var(--muted); }
   #plan .arch .edge { fill: none; stroke: var(--muted); stroke-width: 1.3; opacity: .6; }
   #plan .arch rect { fill: var(--card); stroke: var(--line); stroke-width: 1.4; rx: 7; }
   #plan .arch .r { font-size: 11px; font-weight: 600; fill: var(--fg); }
   #plan .arch .m { font-size: 9px; fill: var(--running); font-family: var(--mono); }
-  #plan .arch .io { font-size: 9px; fill: var(--muted); font-family: var(--mono); }
+  #plan .arch .pv2 { font-size: 9px; fill: var(--done); font-family: var(--mono); }
+  #plan .arch .nv2 { font-size: 9px; fill: var(--muted); font-family: var(--mono); }
   #plan .arch .par { fill: var(--done); font-size: 9.5px; }
 
   #plan .actions { display: flex; gap: 8px; margin-top: 12px; }
@@ -644,50 +656,72 @@ export class WorkspacePanel {
     return { layer, lane, lanes };
   }
 
+  // SVG text neither wraps nor ellipsizes, so anything too wide simply runs out
+  // of its box and over its neighbours. Trim to what the box can hold.
+  function fit(text, px, perChar) {
+    const max = Math.floor(px / perChar);
+    return text.length <= max ? text : text.slice(0, Math.max(1, max - 1)) + '\u2026';
+  }
+
   function archSvg(agents) {
     const { layer, lane, lanes } = planLayers(agents);
-
     const stages = Math.max(...layer) + 1;
-    // With one stage there is no ordering to show — a single row of boxes says
-    // nothing the cards below do not, so it is just noise above them.
+    // One stage means no ordering to show, and a single row of boxes says nothing
+    // the tree below does not.
     if (stages < 2) {
       return '';
     }
 
-    const NW = 150, NH = 52, GX = 62, GY = 14, PX = 12, PY = 26;
+    const NW = 176, NH = 62, GX = 58, GY = 14, PX = 12, PY = 26, INNER = NW - 20;
     const widest = Math.max(...Object.values(lanes));
     const W = PX * 2 + stages * NW + (stages - 1) * GX;
     const H = PY + widest * (NH + GY) + 8;
     const x = i => PX + layer[i] * (NW + GX);
     const y = i => PY + lane[i] * (NH + GY);
 
-    let svg = '<svg width="' + W + '" height="' + H + '">';
+    let g = '';
     for (let l = 0; l < stages; l++) {
       const n = lanes[l] || 0;
-      svg += '<text class="stagelabel" x="' + (PX + l * (NW + GX)) + '" y="14">stage ' + (l + 1) +
-        (n > 1 ? '</text><tspan class="par"> · ' + n + ' in parallel</tspan>' : '</text>');
+      g += '<text class="stagelabel" x="' + (PX + l * (NW + GX)) + '" y="14">stage ' + (l + 1) +
+        (n > 1 ? '</text><tspan class="par"> \u00b7 ' + n + ' in parallel</tspan>' : '</text>');
     }
     agents.forEach((a, i) => {
       for (const d of a.dependsOn || []) {
         if (!agents[d]) continue;
         const x1 = x(d) + NW, y1 = y(d) + NH / 2, x2 = x(i), y2 = y(i) + NH / 2;
         const mid = (x1 + x2) / 2;
-        svg += '<path class="edge" d="M' + x1 + ' ' + y1 + ' C' + mid + ' ' + y1 + ',' +
-               mid + ' ' + y2 + ',' + x2 + ' ' + y2 + '"/>';
+        g += '<path class="edge" d="M' + x1 + ' ' + y1 + ' C' + mid + ' ' + y1 + ',' +
+             mid + ' ' + y2 + ',' + x2 + ' ' + y2 + '"/>';
       }
     });
     agents.forEach((a, i) => {
       const provides = a.provides.map(v => v.symbol).join(', ');
       const needs = a.needs.join(', ');
-      svg += '<g><rect x="' + x(i) + '" y="' + y(i) + '" width="' + NW + '" height="' + NH + '"/>' +
-        '<text class="r" x="' + (x(i) + 10) + '" y="' + (y(i) + 16) + '">' + esc(a.role) + '</text>' +
+      g += '<g><rect x="' + x(i) + '" y="' + y(i) + '" width="' + NW + '" height="' + NH + '"/>' +
+        '<text class="r" x="' + (x(i) + 10) + '" y="' + (y(i) + 16) + '">' +
+          esc(fit(a.role, INNER, 6.6)) + '</text>' +
         '<text class="m" x="' + (x(i) + 10) + '" y="' + (y(i) + 29) + '">' +
-          esc(a.model || 'default model') + '</text>' +
-        '<text class="io" x="' + (x(i) + 10) + '" y="' + (y(i) + 42) + '">' +
-          esc((provides ? '→ ' + provides : '') + (needs ? '  ← ' + needs : '') || ' ') +
-        '</text></g>';
+          esc(fit(a.model || 'default model', INNER, 5.2)) + '</text>' +
+        (provides ? '<text class="pv2" x="' + (x(i) + 10) + '" y="' + (y(i) + 42) + '">' +
+          esc(fit('\u2192 ' + provides, INNER, 5.2)) + '</text>' : '') +
+        (needs ? '<text class="nv2" x="' + (x(i) + 10) + '" y="' + (y(i) + 54) + '">' +
+          esc(fit('\u2190 ' + needs, INNER, 5.2)) + '</text>' : '') +
+        '<title>' + esc(a.role + (a.model ? ' \u00b7 ' + a.model : '') +
+          (provides ? '\nprovides ' + provides : '') +
+          (needs ? '\nneeds ' + needs : '')) + '</title></g>';
     });
-    return '<div class="arch">' + svg + '</svg></div>';
+
+    // A long pipeline will not fit whatever height we pick, so the viewport is
+    // fixed and the content moves instead: wheel to zoom, drag to pan,
+    // double-click to reset.
+    return '<div class="arch">' +
+      '<div class="archctl">' +
+        '<button data-zoom="out" title="Zoom out">\u2212</button>' +
+        '<button data-zoom="in" title="Zoom in">+</button>' +
+        '<button data-zoom="fit" title="Reset">\u2922</button>' +
+      '</div>' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet">' +
+      '<g class="pan">' + g + '</g></svg></div>';
   }
 
   function planHtml(p) {
@@ -702,19 +736,20 @@ export class WorkspacePanel {
       const a = p.agents[i];
       const stage = layer[i];
       const last = order.filter(j => layer[j] === stage).pop() === i;
-      const branch = stage === 0 ? '' : (last ? '└─ ' : '├─ ');
+      const branch = stage === 0 ? '' : (last ? '\u2514\u2500 ' : '\u251c\u2500 ');
       const provides = a.provides.map(v => v.symbol).join(', ');
       const needs = a.needs.join(', ');
       const verifies = a.deliverables.map(d => d.spec).join(', ');
-      return '<div class="prow" data-row="' + i + '" style="padding-left:' + (stage * 18) + 'px">' +
-        '<div class="line">' +
-          '<span class="tw">' + branch + '</span>' +
+      const io = (provides ? '<span class="pp">\u2192 ' + esc(provides) + '</span>' : '') +
+                 (needs ? '<span class="pn">\u2190 ' + esc(needs) + '</span>' : '');
+      return '<div class="prow" data-row="' + i + '" style="margin-left:' + (stage * 16) + 'px">' +
+        '<div class="l1"><span class="tw">' + branch + '</span>' +
           '<span class="pr">' + esc(a.role) + '</span>' +
-          (a.model ? '<span class="pm">' + esc(a.model) + '</span>' : '') +
-          (provides ? '<span class="pp">&rarr; ' + esc(provides) + '</span>' : '') +
-          (needs ? '<span class="pn">&larr; ' + esc(needs) + '</span>' : '') +
-          (verifies ? '<span class="pv">' + esc(verifies) + '</span>' : '') +
-        '</div>' +
+          (a.model ? '<span class="pm">' + esc(a.model) + '</span>' : '') + '</div>' +
+        (io || verifies
+          ? '<div class="l2">' + io +
+            (verifies ? '<span class="pv">' + esc(verifies) + '</span>' : '') + '</div>'
+          : '') +
         '<div class="ptask">' + esc(a.task) + '</div>' +
       '</div>';
     }).join('');
@@ -778,6 +813,12 @@ export class WorkspacePanel {
   }
 
   grid.addEventListener('click', e => {
+    const zoom = e.target.closest('[data-zoom]');
+    if (zoom) {
+      if (zoom.dataset.zoom === 'fit') { view = { k: 1, x: 0, y: 0 }; applyView(); }
+      else { zoomBy(zoom.dataset.zoom === 'in' ? 1.25 : 1 / 1.25); }
+      return;
+    }
     const plan = e.target.closest('[data-plan]');
     if (plan) { api.postMessage({ type: plan.dataset.plan }); return; }
     const prow = e.target.closest('[data-row]');
@@ -793,6 +834,50 @@ export class WorkspacePanel {
   pager.addEventListener('click', e => {
     const b = e.target.closest('[data-page]');
     if (b && !b.disabled) api.postMessage({ type: 'page', page: Number(b.dataset.page) });
+  });
+
+  // Pan and zoom for the architecture view. Re-derived from the DOM each time,
+  // since the plan is re-rendered wholesale on every snapshot.
+  let view = { k: 1, x: 0, y: 0 };
+  function applyView() {
+    const g = grid.querySelector('.arch .pan');
+    if (g) {
+      g.setAttribute('transform',
+        'translate(' + view.x + ',' + view.y + ') scale(' + view.k + ')');
+    }
+  }
+  function zoomBy(factor) {
+    view.k = Math.min(4, Math.max(0.3, view.k * factor));
+    applyView();
+  }
+
+  grid.addEventListener('wheel', e => {
+    if (!e.target.closest('.arch')) return;
+    e.preventDefault();
+    zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);
+  }, { passive: false });
+
+  grid.addEventListener('mousedown', e => {
+    const svg = e.target.closest('.arch svg');
+    if (!svg || e.button !== 0) return;
+    const start = { x: e.clientX - view.x, y: e.clientY - view.y };
+    svg.classList.add('dragging');
+    const move = ev => {
+      view.x = ev.clientX - start.x;
+      view.y = ev.clientY - start.y;
+      applyView();
+    };
+    const up = () => {
+      svg.classList.remove('dragging');
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+
+  grid.addEventListener('dblclick', e => {
+    if (e.target.closest('.arch')) { view = { k: 1, x: 0, y: 0 }; applyView(); }
   });
 
   window.addEventListener('message', e => {
