@@ -11,6 +11,15 @@ interface Handshake {
   token: string;
   pid: number;
   workspace: string;
+  /**
+   * Which build is actually live.
+   *
+   * VS Code keeps running the extension it loaded at startup, so an installed
+   * version and a running version can differ for as long as the window stays
+   * open. Without this written down, every symptom has to be re-diagnosed
+   * against a build that may not be the one producing it.
+   */
+  version: string;
 }
 
 /**
@@ -29,7 +38,8 @@ export class DaemonServer {
     private readonly registry: SessionRegistry,
     private readonly orchestrator: Orchestrator,
     private readonly orchyDir: string,
-    private readonly workspaceRoot: string
+    private readonly workspaceRoot: string,
+    private readonly version: string
   ) {}
 
   async start(): Promise<number> {
@@ -46,6 +56,7 @@ export class DaemonServer {
       token: this.token,
       pid: process.pid,
       workspace: this.workspaceRoot,
+      version: this.version,
     };
     fs.mkdirSync(this.orchyDir, { recursive: true });
     fs.writeFileSync(
@@ -101,7 +112,7 @@ export class DaemonServer {
     const route = url.split('?')[0];
     switch (route) {
       case '/health':
-        return { ok: true, workspace: this.workspaceRoot };
+        return { ok: true, workspace: this.workspaceRoot, version: this.version };
 
       case '/list':
         return { sessions: this.registry.all().map(summarize) };

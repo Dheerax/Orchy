@@ -38,7 +38,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const output = vscode.window.createOutputChannel('Orchy');
   const grid = new GridManager(registry, backend, (message) => output.appendLine(message));
   const tree = new SessionTreeProvider(registry);
-  const daemon = new DaemonServer(registry, orchestrator, orchyDir, root);
+  const version = String(context.extension.packageJSON.version ?? 'unknown');
+  const daemon = new DaemonServer(registry, orchestrator, orchyDir, root, version);
 
   context.subscriptions.push(grid, tree.register(), { dispose: () => daemon.dispose() });
 
@@ -73,7 +74,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   try {
     const port = await daemon.start();
-    output.appendLine(`Orchy daemon listening on 127.0.0.1:${port}`);
+    output.appendLine(`Orchy ${version} — daemon listening on 127.0.0.1:${port}`);
     output.appendLine(`MCP handshake written to ${path.join(orchyDir, 'daemon.json')}`);
   } catch (err) {
     void vscode.window.showErrorMessage(
