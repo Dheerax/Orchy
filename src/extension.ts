@@ -4,6 +4,7 @@ import { OpenCodeBackend } from './backends/opencodeBackend';
 import { DeliverableVerifier } from './core/deliverableVerifier';
 import { EventLog } from './core/eventLog';
 import { Orchestrator } from './core/orchestrator';
+import { Planner } from './core/planner';
 import { SessionRegistry } from './core/sessionRegistry';
 import { Session } from './core/types';
 import {
@@ -28,12 +29,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const worktrees = new WorktreeManager(root);
   const registry = new SessionRegistry(new EventLog(orchyDir));
   const backend = new OpenCodeBackend(undefined, { mini: true });
-  const orchestrator = new Orchestrator(registry, worktrees, backend, new DeliverableVerifier(), {
-    baseBranch: config.get<string>('baseBranch', 'main'),
-  });
+  const planner = new Planner();
+  const orchestrator = new Orchestrator(
+    registry,
+    worktrees,
+    backend,
+    new DeliverableVerifier(),
+    {
+      baseBranch: config.get<string>('baseBranch', 'main'),
+      autoMerge: config.get<boolean>('autoMerge', false),
+    },
+    planner
+  );
   // Before anything reads state: this window owns no terminals and no backend
   // handles, whatever the log says a previous window was doing.
   registry.reconcileForFreshWindow();
+
+  const decidePlan = (id: string, decision: 'approved' | 'rejected'): void => {
+    planner.settle(id, decision);
+  };
 
   const transcripts = new TranscriptDocumentProvider(registry, backend, (id) =>
     orchestrator.handleOf(id)
@@ -72,6 +86,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   });
 
+  daemon.onPlanProposed = (plan) => {
+    WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id), decidePlan);
+    WorkspacePanel.showPlan(plan);
+  };
+
   try {
     const port = await daemon.start();
     output.appendLine(`Orchy ${version} — daemon listening on 127.0.0.1:${port}`);
@@ -85,7 +104,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // A spawn should put the workspace on screen, since it is the only surface
   // where the new agent will appear.
   orchestrator.on('spawned', () => {
-    WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id));
+    WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id), decidePlan);
   });
 
   const pick = async (placeHolder: string): Promise<string | undefined> => {
@@ -142,7 +161,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
 
     vscode.commands.registerCommand('orchy.showGraph', () =>
-      WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id))
+      WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id), decidePlan)
     ),
 
     vscode.commands.registerCommand('orchy.focusSession', (arg?: unknown) => {
@@ -150,7 +169,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!id) {
         return;
       }
-      WorkspacePanel.show(registry, worktrees, backend, (i) => orchestrator.handleOf(i));
+      WorkspacePanel.show(registry, worktrees, backend, (i) => orchestrator.handleOf(i), decidePlan);
       WorkspacePanel.refreshIfOpen();
     }),
 
@@ -385,7 +404,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         groups: [{ size: 0.5 }, { size: 0.5 }],
       });
       await vscode.commands.executeCommand('workbench.view.extension.orchy');
-      WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id));
+      WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id), decidePlan);
       void vscode.window.showInformationMessage(
         'Orchy: layout ready. Agent terminals fill the editor columns; the topology panel is beside them.'
       );

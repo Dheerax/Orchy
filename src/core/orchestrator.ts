@@ -1,8 +1,18 @@
 import { EventEmitter } from 'events';
 import { AgentBackend, BackendHandle } from '../backends/types';
+import { ContractChecker } from './contractChecker';
 import { DeliverableVerifier } from './deliverableVerifier';
+import { Planner } from './planner';
 import { SessionRegistry } from './sessionRegistry';
-import { Deliverable, DEFAULT_FORBIDDEN_COMMANDS, Session, TERMINAL_STATUSES } from './types';
+import {
+  AgentContract,
+  Deliverable,
+  DEFAULT_FORBIDDEN_COMMANDS,
+  Plan,
+  PlannedAgent,
+  Session,
+  TERMINAL_STATUSES,
+} from './types';
 import { WorktreeManager } from './worktreeManager';
 
 export interface SpawnRequest {
@@ -12,6 +22,8 @@ export interface SpawnRequest {
    * "after, and on top of" rather than only "after".
    */
   dependsOn?: string[];
+  /** What this agent promises to produce, and what it expects to exist. */
+  agreement?: AgentContract;
   /** Free-text label used for the id and grouping. Not sent to the backend. */
   role: string;
   /**
@@ -33,6 +45,8 @@ export interface SpawnRequest {
 export interface OrchyConfig {
   baseBranch: string;
   globalBudgetCap?: number;
+  /** Merge a verified session automatically when nothing about it is ambiguous. */
+  autoMerge?: boolean;
 }
 
 /**
@@ -53,7 +67,9 @@ export class Orchestrator extends EventEmitter {
     private readonly worktrees: WorktreeManager,
     private readonly backend: AgentBackend,
     private readonly verifier: DeliverableVerifier,
-    private readonly config: OrchyConfig
+    private readonly config: OrchyConfig,
+    readonly planner: Planner = new Planner(),
+    private readonly contracts: ContractChecker = new ContractChecker()
   ) {
     super();
     this.rehydrateCounters();
@@ -103,6 +119,7 @@ export class Orchestrator extends EventEmitter {
       deliverables,
       contract: { forbiddenCommands: [...DEFAULT_FORBIDDEN_COMMANDS] },
       dependsOn,
+      agreement: req.agreement ?? { provides: [], needs: [] },
     });
 
     if (dependsOn.length > 0 && !this.dependenciesMet(dependsOn)) {
@@ -127,6 +144,63 @@ export class Orchestrator extends EventEmitter {
     return session;
   }
 
+  /**
+   * Merge a verified session without asking, when nothing about it is ambiguous.
+   *
+   * Opt-in, and deliberately timid: it declines on anything it cannot merge
+   * cleanly. Once agents are reliable the approval step becomes the bottleneck,
+   * but a merge that needed a human and did not get one is far worse than a
+   * merge that waited.
+   */
+  private async maybeAutoMerge(id: string): Promise<void> {
+    if (!this.config.autoMerge) {
+      return;
+    }
+    try {
+      await this.merge(id);
+      this.emit('autoMerged', this.registry.get(id));
+    } catch (err) {
+      this.registry.record({
+        type: 'status',
+        session: id,
+        status: 'waiting_input',
+        error: `Automatic merge declined: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  /**
+   * Turn an approved plan into running agents.
+   * Indices become real session ids as each agent is created, so a plan can
+   * describe its own shape without knowing ids in advance.
+   */
+  async runPlan(plan: Plan): Promise<Session[]> {
+    const created: Session[] = [];
+    const idByIndex = new Map<number, string>();
+
+    // Dependencies first, so an agent's depends_on always resolves.
+    const order = [...plan.agents.keys()].sort(
+      (a, b) => plan.agents[a].dependsOn.length - plan.agents[b].dependsOn.length
+    );
+
+    for (const index of order) {
+      const agent: PlannedAgent = plan.agents[index];
+      const session = await this.spawn({
+        role: agent.role,
+        task: agent.task,
+        deliverables: agent.deliverables,
+        model: agent.model,
+        dependsOn: agent.dependsOn
+          .map((d) => idByIndex.get(d))
+          .filter((d): d is string => d !== undefined),
+        agreement: { provides: agent.provides, needs: agent.needs },
+      });
+      idByIndex.set(index, session.id);
+      created.push(session);
+    }
+    return created;
+  }
+
   /** Connect a session to its backend and send the opening prompt. */
   private async start(id: string, req: SpawnRequest): Promise<void> {
     const session = this.registry.get(id);
@@ -135,7 +209,12 @@ export class Orchestrator extends EventEmitter {
     }
     const opts = {
       sessionId: id,
-      task: this.decorateTask(req.task, session.deliverables, session.worktree?.path),
+      task: this.decorateTask(
+        req.task,
+        session.deliverables,
+        session.worktree?.path,
+        session.agreement
+      ),
       directory: session.worktree?.path ?? this.worktrees.root,
       agent: req.agent,
       model: req.model,
@@ -259,13 +338,35 @@ export class Orchestrator extends EventEmitter {
    * Stating deliverables to the agent is what makes verification fair — the
    * session is told exactly what it will be measured against.
    */
-  private decorateTask(task: string, deliverables: Deliverable[], worktree?: string): string {
+  private decorateTask(
+    task: string,
+    deliverables: Deliverable[],
+    worktree?: string,
+    agreement?: AgentContract
+  ): string {
     const lines = [task, ''];
     if (worktree) {
       lines.push(
         `You are working in an isolated git worktree at ${worktree}.`,
         `Do not modify files outside it. Do not run git stash, git reset --hard, or force-push —`,
         `the stash and refs are shared with other agents working in parallel.`,
+        ''
+      );
+    }
+    if (agreement && agreement.provides.length > 0) {
+      lines.push('Other agents are waiting on these, exactly as named:');
+      for (const p of agreement.provides) {
+        lines.push(`  - export \`${p.symbol}\` from ${p.file}`);
+      }
+      lines.push(
+        'Do not rename or relocate them — downstream agents are already written against these.',
+        ''
+      );
+    }
+    if (agreement && agreement.needs.length > 0) {
+      lines.push(
+        `Already available from work merged into this branch: ${agreement.needs.join(', ')}.`,
+        'Use them rather than redefining them.',
         ''
       );
     }
@@ -366,6 +467,31 @@ export class Orchestrator extends EventEmitter {
         detail: r.detail,
       });
     }
+    const contractResults = this.contracts.check(session.agreement, cwd);
+    for (const r of contractResults) {
+      this.registry.record({
+        type: 'contract',
+        session: id,
+        symbol: r.symbol,
+        file: r.file,
+        satisfied: r.satisfied,
+        detail: r.detail,
+      });
+    }
+    const brokenPromise = contractResults.find((r) => !r.satisfied);
+    if (brokenPromise) {
+      // Deliverables can pass while the interface everyone else waits on is
+      // missing. Completing here would release dependents onto a broken contract.
+      this.registry.record({
+        type: 'status',
+        session: id,
+        status: 'idle_unverified',
+        error: `Contract not met — ${brokenPromise.detail}.`,
+      });
+      this.emit('verified', this.registry.get(id));
+      return this.registry.get(id);
+    }
+
     if (results.length > 0 && results.every((r) => r.verified)) {
       // Ask for completion explicitly. Deliverables alone only promote a session
       // already parked at idle_unverified, so a session still marked running
@@ -377,6 +503,7 @@ export class Orchestrator extends EventEmitter {
     const after = this.registry.get(id);
     if (after?.status === 'complete') {
       await this.releaseReady();
+      await this.maybeAutoMerge(id);
     }
     // Always announce the outcome, not just success — the auto-verify triggered
     // by a backend going idle is fire-and-forget, so this is the only signal a

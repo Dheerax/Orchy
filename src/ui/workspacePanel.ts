@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { AgentBackend, BackendHandle, TranscriptEntry } from '../backends/types';
 import { SessionRegistry } from '../core/sessionRegistry';
-import { Session } from '../core/types';
+import { Plan, Session } from '../core/types';
 import { WorktreeManager } from '../core/worktreeManager';
 import { planGrid } from './gridLayout';
 
@@ -41,6 +41,7 @@ export class WorkspacePanel {
   private handles = new Map<string, BackendHandle>();
   private focused: string | undefined;
   private page = 0;
+  private plan: Plan | undefined;
   private pending: NodeJS.Timeout | undefined;
 
   private constructor(
@@ -48,7 +49,8 @@ export class WorkspacePanel {
     private readonly registry: SessionRegistry,
     private readonly worktrees: WorktreeManager,
     private readonly backend: AgentBackend,
-    private readonly handleOf: (id: string) => BackendHandle | undefined
+    private readonly handleOf: (id: string) => BackendHandle | undefined,
+    private readonly onPlanDecision?: (id: string, decision: 'approved' | 'rejected') => void
   ) {
     this.panel.webview.html = this.html();
 
@@ -91,7 +93,8 @@ export class WorkspacePanel {
     registry: SessionRegistry,
     worktrees: WorktreeManager,
     backend: AgentBackend,
-    handleOf: (id: string) => BackendHandle | undefined
+    handleOf: (id: string) => BackendHandle | undefined,
+    onPlanDecision?: (id: string, decision: 'approved' | 'rejected') => void
   ): void {
     if (WorkspacePanel.current) {
       WorkspacePanel.current.panel.reveal(undefined, true);
@@ -103,11 +106,28 @@ export class WorkspacePanel {
       { viewColumn: vscode.ViewColumn.Active, preserveFocus: true },
       { enableScripts: true, retainContextWhenHidden: false }
     );
-    WorkspacePanel.current = new WorkspacePanel(panel, registry, worktrees, backend, handleOf);
+    WorkspacePanel.current = new WorkspacePanel(
+      panel,
+      registry,
+      worktrees,
+      backend,
+      handleOf,
+      onPlanDecision
+    );
   }
 
   static refreshIfOpen(): void {
     WorkspacePanel.current?.schedulePush();
+  }
+
+  /** Put a proposed plan in front of the user before anything runs. */
+  static showPlan(plan: Plan): void {
+    if (!WorkspacePanel.current) {
+      return;
+    }
+    WorkspacePanel.current.plan = plan;
+    WorkspacePanel.current.panel.reveal(undefined, false);
+    void WorkspacePanel.current.push();
   }
 
   /** Coalesce bursts: seven agents all emitting events must not mean seven repaints. */
@@ -155,6 +175,17 @@ export class WorkspacePanel {
             msg.id,
             msg.type === 'openSide'
           );
+        }
+        break;
+      case 'approvePlan':
+      case 'rejectPlan':
+        if (this.plan) {
+          this.onPlanDecision?.(
+            this.plan.id,
+            msg.type === 'approvePlan' ? 'approved' : 'rejected'
+          );
+          this.plan = undefined;
+          await this.push();
         }
         break;
       case 'purge':
@@ -239,6 +270,7 @@ export class WorkspacePanel {
         pages,
         blocked: this.registry.needingAttention().length,
         archived: this.registry.all().length - live.length,
+        plan: this.plan,
       },
     });
   }
@@ -426,6 +458,28 @@ export class WorkspacePanel {
   .act button:hover { color: var(--fg); border-color: var(--running); }
   .act button.danger:hover { color: var(--failed); border-color: var(--failed); }
 
+  /* A plan takes over the panel: it is a decision, not a notification. */
+  #plan { flex: 1 1 auto; overflow-y: auto; border: 1px solid var(--running);
+          border-radius: 10px; background: var(--card); padding: 14px; }
+  #plan h2 { margin: 0 0 2px; font-size: 13px; }
+  #plan .sub { color: var(--muted); font-size: 11.5px; margin-bottom: 12px; }
+  #plan .warn { border-left: 2px solid var(--blocked); background: rgba(204,167,0,.08);
+                padding: 6px 10px; margin-bottom: 6px; font-size: 11.5px; }
+  #plan .agent { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+                 margin-bottom: 6px; }
+  #plan .agent .top { display: flex; gap: 8px; align-items: baseline; }
+  #plan .agent .r { font-weight: 600; }
+  #plan .agent .dep { color: var(--muted); font-size: 11px; margin-left: auto; }
+  #plan .agent .t { font-size: 11.5px; margin: 4px 0; }
+  #plan .agent .meta { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  #plan .meta .sym { color: var(--done); }
+  #plan .meta .need { color: var(--running); }
+  #plan .actions { display: flex; gap: 8px; margin-top: 12px; }
+  #plan .actions button { border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
+                          font-size: 12px; padding: 5px 14px; background: none; color: var(--fg); }
+  #plan .actions .go { border-color: var(--done); color: var(--done); }
+  #plan .actions .no:hover { border-color: var(--failed); color: var(--failed); }
+
   .empty { color: var(--muted); max-width: 560px; line-height: 1.7; margin: auto; text-align: center; }
   .empty code { background: var(--vscode-textCodeBlock-background); padding: 1px 5px; border-radius: 3px; }
 </style>
@@ -513,8 +567,45 @@ export class WorkspacePanel {
       '<button data-page="' + (d.page + 1) + '"' + (d.page >= d.pages - 1 ? ' disabled' : '') + '>&rsaquo;</button>';
   }
 
+  function planHtml(p) {
+    const warns = p.warnings.map(w => '<div class="warn">' + esc(w) + '</div>').join('');
+    const agents = p.agents.map(a => {
+      const deps = a.dependsOn.length
+        ? 'after ' + a.dependsOn.map(x => esc(p.agents[x] ? p.agents[x].role : x)).join(', ')
+        : 'starts immediately';
+      const provides = a.provides.map(x =>
+        '<span class="sym">' + esc(x.symbol) + '</span> in ' + esc(x.file)).join(', ');
+      const needs = a.needs.map(x => '<span class="need">' + esc(x) + '</span>').join(', ');
+      const delivers = a.deliverables.map(x => esc(x.spec)).join(', ');
+      return '<div class="agent"><div class="top"><span class="r">' + esc(a.role) + '</span>' +
+        '<span class="dep">' + deps + '</span></div>' +
+        '<div class="t">' + esc(a.task) + '</div>' +
+        (provides ? '<div class="meta">provides ' + provides + '</div>' : '') +
+        (needs ? '<div class="meta">needs ' + needs + '</div>' : '') +
+        (delivers ? '<div class="meta">verifies ' + delivers + '</div>' : '') +
+        '</div>';
+    }).join('');
+
+    return '<div id="plan"><h2>' + esc(p.summary) + '</h2>' +
+      '<div class="sub">' + p.agents.length +
+      ' agent(s) proposed. Nothing runs until you approve.</div>' +
+      warns + agents +
+      '<div class="actions">' +
+        '<button class="go" data-plan="approvePlan">Approve and run</button>' +
+        '<button class="no" data-plan="rejectPlan">Reject</button>' +
+      '</div></div>';
+  }
+
   function render(d) {
     renderPager(d);
+
+    if (d.plan) {
+      count.textContent = 'plan awaiting your approval';
+      count.className = 'count alert';
+      hint.textContent = '';
+      grid.innerHTML = planHtml(d.plan);
+      return;
+    }
     for (const el of grid.querySelectorAll('.body')) {
       scrollMemory[el.id] = { top: el.scrollTop, atEnd: el.scrollHeight - el.scrollTop - el.clientHeight < 24 };
     }
@@ -552,6 +643,8 @@ export class WorkspacePanel {
   }
 
   grid.addEventListener('click', e => {
+    const plan = e.target.closest('[data-plan]');
+    if (plan) { api.postMessage({ type: plan.dataset.plan }); return; }
     const file = e.target.closest('.file');
     if (file) { api.postMessage({ type: 'diff', id: file.dataset.id, file: file.dataset.file }); return; }
     const act = e.target.closest('[data-act]');

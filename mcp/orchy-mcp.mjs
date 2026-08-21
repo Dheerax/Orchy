@@ -117,12 +117,70 @@ const TOOLS = [
     },
   },
   {
+    name: 'orchy_plan',
+    description:
+      'Propose a pipeline and wait for the user to approve it. THIS IS THE NORMAL WAY TO ' +
+      'START WORK — prefer it over spawning agents one by one, which gives the user no say ' +
+      'in the shape before it runs. Describe every agent, what it will produce, what it ' +
+      'needs, and which other agents it depends on (by index). Orchy checks the plan for ' +
+      'needs nobody provides, two agents promising the same symbol, dependency cycles, and ' +
+      'missing deliverables, then shows it for approval. On approval every agent is spawned ' +
+      'in dependency order. Blocks until the user decides.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'One line: what this pipeline delivers.' },
+        agents: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              role: { type: 'string', description: 'ui | api | schema | tests | docs | free text' },
+              task: { type: 'string' },
+              deliverables: DELIVERABLES_SCHEMA,
+              depends_on: {
+                type: 'array',
+                items: { type: 'number' },
+                description:
+                  'Indices of agents in this same list that must finish first. Their branches ' +
+                  'are merged in before this agent starts.',
+              },
+              provides: {
+                type: 'array',
+                description:
+                  'The interface this agent owes others: symbols and the file they live in. ' +
+                  'Checked after the work, so a renamed or unexported symbol fails rather ' +
+                  'than silently breaking whoever depends on it.',
+                items: {
+                  type: 'object',
+                  properties: { symbol: { type: 'string' }, file: { type: 'string' } },
+                  required: ['symbol', 'file'],
+                },
+              },
+              needs: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Symbols this agent expects to already exist, from its dependencies.',
+              },
+              model: { type: 'string' },
+            },
+            required: ['role', 'task'],
+          },
+        },
+        timeout_seconds: { type: 'number', description: 'How long to await approval. Default 600.' },
+      },
+      required: ['summary', 'agents'],
+    },
+    route: '/plan',
+  },
+  {
     name: 'orchy_spawn',
     description:
       'Start an agent session in its own git worktree and place it in the IDE grid. ' +
-      'Use one session per decoupled area of work (ui, backend, docs, ml). Always declare ' +
-      'deliverables — without them the session can never reach "complete". For work that ' +
-      'builds on another agent, pass depends_on rather than waiting and spawning later.',
+      'Prefer orchy_plan for anything with more than one agent — it lets the user approve ' +
+      'the shape first. Use this for a single follow-up agent. Always declare deliverables: ' +
+      'without them the session can never reach "complete". For work that builds on another ' +
+      'agent, pass depends_on rather than waiting and spawning later.',
     inputSchema: {
       type: 'object',
       properties: {

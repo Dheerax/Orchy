@@ -119,6 +119,7 @@ export class SessionRegistry extends EventEmitter {
         backend: event.backend,
         worktree: event.worktree,
         dependsOn: event.dependsOn ?? [],
+        agreement: event.agreement ?? { provides: [], needs: [] },
         surface: { visible: false },
         deliverables: event.deliverables,
         contract: event.contract,
@@ -189,6 +190,17 @@ export class SessionRegistry extends EventEmitter {
         // stops existing as far as every surface is concerned.
         this.sessions.delete(event.session);
         break;
+
+      case 'contract': {
+        const promise = session.agreement.provides.find(
+          (p) => p.symbol === event.symbol && p.file === event.file
+        );
+        if (promise) {
+          (promise as { satisfied?: boolean; detail?: string }).satisfied = event.satisfied;
+          (promise as { satisfied?: boolean; detail?: string }).detail = event.detail;
+        }
+        break;
+      }
 
       case 'merged':
       case 'tool':

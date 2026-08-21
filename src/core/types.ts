@@ -52,6 +52,20 @@ export interface Deliverable {
   detail?: string;
 }
 
+/**
+ * What an agent promises to produce, and what it expects to already exist.
+ *
+ * Deliverables prove a file appeared. A contract proves the *interface* two
+ * agents agreed on survived — which is the thing that actually breaks when work
+ * is split across parallel sessions.
+ */
+export interface AgentContract {
+  /** Symbols this agent will make available, and where. */
+  provides: { symbol: string; file: string }[];
+  /** Symbols this agent expects from its dependencies. */
+  needs: string[];
+}
+
 export interface Contract {
   maxDurationSeconds?: number;
   allowedPaths?: string[];
@@ -106,6 +120,7 @@ export interface Session {
   worktree?: WorktreeRef;
   /** Sessions that must complete, and be merged in, before this one starts. */
   dependsOn: string[];
+  agreement: AgentContract;
   surface: {
     terminalId?: string;
     gridSlot?: number;
@@ -118,6 +133,31 @@ export interface Session {
   lastError?: string;
   createdAt: string;
   lastEventAt: string;
+}
+
+/* ------------------------------------------------------------------ *
+ * Plans — proposed before anything runs
+ * ------------------------------------------------------------------ */
+
+export interface PlannedAgent {
+  role: string;
+  task: string;
+  deliverables: Deliverable[];
+  /** Indices into the plan's own agent list, so a plan is self-contained. */
+  dependsOn: number[];
+  provides: { symbol: string; file: string }[];
+  needs: string[];
+  model?: string;
+}
+
+export interface Plan {
+  id: string;
+  summary: string;
+  agents: PlannedAgent[];
+  status: 'proposed' | 'approved' | 'rejected';
+  /** Problems found before the plan may run, e.g. a need nobody provides. */
+  warnings: string[];
+  createdAt: string;
 }
 
 /* ------------------------------------------------------------------ *
@@ -143,6 +183,7 @@ export type OrchyEvent =
       deliverables: Deliverable[];
       contract?: Contract;
       dependsOn?: string[];
+      agreement?: AgentContract;
     })
   | (EventBase & { type: 'status'; status: SessionStatus; error?: string })
   | (EventBase & { type: 'tool'; name: string; target?: string })
@@ -152,6 +193,13 @@ export type OrchyEvent =
   | (EventBase & { type: 'surface'; terminalId?: string; gridSlot?: number; visible: boolean })
   | (EventBase & { type: 'attached'; handle: string })
   | (EventBase & { type: 'merged'; branch: string; into: string })
+  | (EventBase & {
+      type: 'contract';
+      symbol: string;
+      file: string;
+      satisfied: boolean;
+      detail?: string;
+    })
   | (EventBase & { type: 'archived' })
   | (EventBase & { type: 'purged' });
 
@@ -168,5 +216,6 @@ export type DraftEvent =
   | Omit<Extract<OrchyEvent, { type: 'surface' }>, 't' | 'seq'>
   | Omit<Extract<OrchyEvent, { type: 'attached' }>, 't' | 'seq'>
   | Omit<Extract<OrchyEvent, { type: 'merged' }>, 't' | 'seq'>
+  | Omit<Extract<OrchyEvent, { type: 'contract' }>, 't' | 'seq'>
   | Omit<Extract<OrchyEvent, { type: 'archived' }>, 't' | 'seq'>
   | Omit<Extract<OrchyEvent, { type: 'purged' }>, 't' | 'seq'>;

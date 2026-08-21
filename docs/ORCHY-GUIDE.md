@@ -9,6 +9,19 @@ that well.
 
 ---
 
+## 0. Propose a plan first
+
+For anything with more than one agent, call `orchy_plan`. Describe every agent,
+what it will produce, what it needs, and which agents it depends on. The user
+sees the whole shape and approves it before anything runs.
+
+Orchy checks the plan for needs nobody provides, two agents promising the same
+symbol, dependency cycles, and agents with no deliverables — and shows those
+warnings alongside it. Fix what it finds before proposing again.
+
+Do not spawn agents one at a time for a multi-agent job. The user then finds out
+what you decided only after it is already running, which is the wrong order.
+
 ## 1. Decompose by ownership, not by task list
 
 Split work so that **two agents rarely need the same file**. Split by area —
@@ -23,7 +36,26 @@ If two pieces of work touch the same file, they are one agent, or one depends on
 the other. Two agents editing one file produces a merge conflict you will have to
 resolve by hand.
 
-## 2. Always declare deliverables
+## 2. Declare the interface, not just the files
+
+In a plan, each agent states `provides` — the symbols it owes others and the
+file they live in — and `needs`, the symbols it expects to already exist.
+
+```
+{ role: "schema", provides: [{ symbol: "User", file: "src/models/user.ts" }] }
+{ role: "api", needs: ["User"], depends_on: [0] }
+```
+
+Deliverables prove a file appeared. Contracts prove the thing other agents are
+waiting for is actually in it. A session whose contract fails is held at
+`idle_unverified` even when its deliverables passed, because releasing it would
+start its dependents against an interface that does not exist.
+
+This is the failure that actually bites when work runs in parallel: a symbol gets
+renamed, nested, or never exported, and three downstream agents build against
+something imaginary.
+
+## 3. Always declare deliverables
 
 A session without deliverables can **never** reach `complete`. This is deliberate.
 
@@ -46,7 +78,7 @@ file exists and is non-empty.
 quiet having written nothing, fairly often. Verification is the only thing that
 distinguishes done from stopped.
 
-## 3. Use `depends_on` instead of waiting yourself
+## 4. Use `depends_on` instead of waiting yourself
 
 If B builds on A, say so:
 
@@ -62,7 +94,7 @@ base A was cut at.
 Do not spawn B yourself after watching A finish. You will get the ordering but not
 the merge, and B will build against code that does not exist yet.
 
-## 4. Wait on events, never sleep
+## 5. Wait on events, never sleep
 
 Use `orchy_wait`. It returns the moment a session finishes, blocks on a permission
 prompt, fails, or lands unverified.
@@ -74,7 +106,7 @@ orchy_wait({ session_ids: ["api-1", "ui-1"] })
 Do **not** sleep and re-poll `orchy_status` in a loop. It costs a turn every cycle,
 adds latency at both ends, and still misses the instant an agent got stuck.
 
-## 5. Reuse agents by role
+## 6. Reuse agents by role
 
 Before spawning, call `orchy_list`. If a session with the right role is alive and
 idle, send it the next piece of work with `orchy_send` rather than spawning a
@@ -84,14 +116,14 @@ than a fresh one, and costs less.
 Spawn a new session when the work is genuinely a separate area, or when the
 existing session is finished and archived.
 
-## 6. Read the status vocabulary precisely
+## 7. Read the status vocabulary precisely
 
 | Status | Meaning | What you do |
 |---|---|---|
 | `queued` | Waiting on dependencies | Nothing. It releases itself. |
 | `running` | Working | Nothing. Use `orchy_wait`. |
 | `waiting_input` | Blocked on a human | Tell the user. You usually cannot clear it. |
-| `idle_unverified` | Stopped, deliverables missing | Read which ones. Send it back with `orchy_send`, or fix the task. |
+| `idle_unverified` | Stopped; a deliverable or contract failed | Read which. Send it back with `orchy_send`, or fix the task. |
 | `complete` | Deliverables verified | Ready to merge. |
 | `failed` | Errored | Read the error. Do not retry blindly. |
 
@@ -99,7 +131,7 @@ existing session is finished and archived.
 and the evidence disagrees. Look at which deliverable failed and why before
 deciding whether to re-prompt or restate the task.
 
-## 7. Merge deliberately
+## 8. Merge deliberately
 
 `orchy_merge` rebases the agent's branch onto main and fast-forwards. It refuses
 unless the session is verified complete.
@@ -110,7 +142,7 @@ conflict — that is git telling you the decomposition in step 1 was wrong.
 Agents are instructed to commit their own work. If a merge complains about
 uncommitted changes, the agent stopped early; send it back rather than forcing.
 
-## 8. Finish cleanly
+## 9. Finish cleanly
 
 - `orchy_archive` — done with it; removes the worktree, keeps the branch and transcript
 - `orchy_kill` — stop it now; keeps everything for inspection

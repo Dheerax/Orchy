@@ -42,6 +42,9 @@ export class DaemonServer {
     private readonly version: string
   ) {}
 
+  /** Set by the extension so a proposed plan can surface in the UI immediately. */
+  onPlanProposed: ((plan: import('../core/types').Plan) => void) | undefined;
+
   async start(): Promise<number> {
     this.server = http.createServer((req, res) => void this.handle(req, res));
     await new Promise<void>((resolve, reject) => {
@@ -145,6 +148,64 @@ export class DaemonServer {
           throw new Error(`No session '${id}'. Known: ${this.knownIds()}`);
         }
         return summarize(session);
+      }
+
+      case '/plan': {
+        const agents = Array.isArray(body.agents) ? body.agents : [];
+        const plan = this.orchestrator.planner.propose(
+          String(body.summary ?? 'Pipeline'),
+          agents.map((a) => {
+            const agent = a as Record<string, unknown>;
+            const raw = Array.isArray(agent.deliverables) ? agent.deliverables : [];
+            return {
+              role: String(agent.role ?? 'agent'),
+              task: String(agent.task ?? ''),
+              model: agent.model ? String(agent.model) : undefined,
+              dependsOn: Array.isArray(agent.depends_on) ? agent.depends_on.map(Number) : [],
+              provides: (Array.isArray(agent.provides) ? agent.provides : []).map((p) => {
+                const entry = p as Record<string, unknown>;
+                return { symbol: String(entry.symbol ?? ''), file: String(entry.file ?? '') };
+              }),
+              needs: Array.isArray(agent.needs) ? agent.needs.map(String) : [],
+              deliverables: raw.map((d) => {
+                const entry = d as Record<string, unknown>;
+                const kind = String(entry.kind ?? 'file');
+                return {
+                  kind: (kind === 'glob' || kind === 'command' ? kind : 'file') as
+                    | 'file'
+                    | 'glob'
+                    | 'command',
+                  spec: String(entry.spec ?? ''),
+                  verified: false,
+                };
+              }),
+            };
+          })
+        );
+        this.onPlanProposed?.(plan);
+
+        const decided = await this.orchestrator.planner.awaitDecision(
+          plan.id,
+          Math.min(Math.max(Number(body.timeout_seconds ?? 600), 1), 1800) * 1000
+        );
+        if (decided?.status === 'approved') {
+          const sessions = await this.orchestrator.runPlan(decided);
+          return {
+            plan_id: plan.id,
+            status: 'approved',
+            warnings: plan.warnings,
+            sessions: sessions.map(summarize),
+          };
+        }
+        return {
+          plan_id: plan.id,
+          status: decided?.status ?? 'proposed',
+          warnings: plan.warnings,
+          note:
+            decided?.status === 'rejected'
+              ? 'The user rejected this plan. Ask what to change before proposing again.'
+              : 'Still awaiting a decision. The plan is shown in the Orchy panel.',
+        };
       }
 
       case '/wait':
