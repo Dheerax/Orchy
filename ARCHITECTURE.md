@@ -129,7 +129,53 @@ interface AgentBackend {
 
 `capabilities()` is how the orchestrator routes: image generation goes to Agy because OpenCode's image path rides an OAuth that fails; long tasks go to a backend with checkpoints.
 
-**v1 ships two:** `OpenCodeBackend` (via the existing bridge) and `CliBackend` (any terminal-driven agent, events from VS Code shell integration).
+### 3.1 OpenCode: the attach model (RESOLVED — verified against opencode 1.18.19)
+
+The critical mechanic, confirmed by `opencode attach --help`:
+
+```bash
+opencode attach <server-url> --session <id> --dir <worktree-path>
+```
+
+So a session has **two faces onto one underlying session**:
+
+| Concern | Channel |
+|---|---|
+| Orchestration — prompts, status, events | HTTP + SSE against the shared `opencode serve` |
+| Visibility — what the user watches in the grid | `opencode attach` TUI in a terminal |
+
+One `opencode serve` process, N sessions, N attached TUIs. Starting a session does not spawn a CLI process or re-trigger auth. **This is the thing that makes the terminal grid work** — we never drive the TUI with synthetic keystrokes; we drive the session over HTTP and the TUI simply reflects it.
+
+Flags that matter for the grid specifically:
+- `--mini` — minimal interactive interface. Likely the right default for a ~520px column.
+- `--replay-limit N` / `--no-replay` — caps history replay on resize. Grid panes resize constantly; without this every reflow replays the whole transcript.
+- `--fork` — branch a session from an existing one (feeds the deferred Duplicate op in §8).
+- `-u` / `-p` — basic auth, if the server is started with credentials.
+
+### 3.2 Free wins from the OpenCode CLI
+
+Things §8–§10 called for that we do **not** need to build:
+
+| Need | Provided by |
+|---|---|
+| Export (transcript) | `opencode export <sessionID>` |
+| Cost governor input | `opencode stats` — token usage and cost |
+| Registry reconciliation | `opencode session list` |
+| Hard delete | `opencode session delete <sessionID>` |
+| Per-session role | `--agent <name>` |
+| Unattended sessions | `--auto` (auto-approve non-denied permissions — dangerous, opt-in per session) |
+
+### 3.3 Backends planned
+
+| Backend | v1 | Event source |
+|---|---|---|
+| `OpenCodeBackend` | ✅ | HTTP+SSE, `~/.opencode-mcp-events.jsonl` |
+| `CliBackend` (generic terminal agent) | ✅ | VS Code shell integration events |
+| `CodexBackend` | v1.1 | Codex writes rollout logs to `~/.codex/sessions` — pollable, no hooks needed |
+| `AgyBackend` | v1.1 | agy-mcp bridge; the only one with verified image generation |
+| `ClaudeCodeBackend` | v2 | hook server, the way agent-flow and Synapse do it |
+
+**Note for a future non-VS-Code surface:** `opencode acp` starts an Agent Client Protocol server. ACP is how editors like Zed talk to agents — if Orchy ever leaves VS Code, that's the seam, not a rewrite.
 
 ---
 
@@ -145,12 +191,19 @@ orchy_spawn(role, task, deliverables, model?)
    │      bootstrap: copy .worktreeinclude patterns (.env etc.)
    │      pnpm install (global virtual store → near-zero marginal disk)
    │
-   ├─ 2. BackendRegistry.spawn()  in that worktree dir
+   ├─ 2. BackendRegistry.spawn()   → creates the session over HTTP, returns sessionId
+   │      (no process spawned; the shared `opencode serve` already runs)
    │
-   ├─ 3. GridManager.place()
-   │      window.createTerminal({ location: TerminalLocation.Editor,
-   │                              color: ThemeColor('orchy.running'),
-   │                              iconPath: roleIcon })
+   ├─ 3. GridManager.place()       → attaches a TUI to that same session
+   │      window.createTerminal({
+   │        location: TerminalLocation.Editor,
+   │        color: ThemeColor('orchy.running'),
+   │        iconPath: roleIcon,
+   │        cwd: worktreePath,
+   │        shellPath: 'opencode',
+   │        shellArgs: ['attach', serverUrl, '--session', sessionId,
+   │                    '--dir', worktreePath, '--mini', '--replay-limit', '200']
+   │      })
    │      reveal at ViewColumn slot, preserveFocus: true
    │
    └─ 4. status → running,  emit spawn event
@@ -285,7 +338,7 @@ Not building these is fine. Not *knowing* about them was the risk.
 
 ## 13. Build order
 
-1. **Spike (half a day):** can OpenCode attach a TUI to an existing served session? *(see Open Question 1 — it changes §3)*
+1. ~~Spike: can OpenCode attach a TUI to an existing served session?~~ **RESOLVED — yes. See §3.1.**
 2. Daemon + event log + SessionRegistry. No UI. Prove state survives a window reload.
 3. WorktreeManager, with the stash guard and pnpm global store.
 4. GridManager: spawn/teardown terminals into editor columns.
@@ -299,9 +352,15 @@ Steps 2–6 are the actual product. 8 is what makes people look twice.
 
 ---
 
-## Open questions for you
+## Resolved decisions
 
-1. **Can `opencode` attach a TUI to a session created via its HTTP API?** If yes, orchestration and visibility share one session and §3 is clean. If no, we either drive terminals crudely with `sendText` or run headless and render our own transcript — which reopens the terminal-vs-webview decision. **This is the first thing to test.**
-2. **Base branch:** always `origin/main`, or per-session configurable? Affects `WorktreeManager` and the merge flow.
-3. **Repo isn't git-initialized yet.** Orchy needs one to develop against — and worktrees need a repo with a remote to be realistic.
-4. **Scope of v1 in §8:** anything marked ⏸ that you want pulled in, or ✅ you want cut?
+1. ~~Can `opencode` attach a TUI to a session created via its HTTP API?~~ **Yes** — `opencode attach <url> --session <id> --dir <path>`, verified against opencode 1.18.19. See §3.1.
+2. ~~Base branch~~ — **always `main`.** Worktrees branch from fresh `origin/main`; merge target is `main`. Not per-session configurable in v1.
+3. ~~Repo not git-initialized~~ — **done.** `git init -b main`, initial commit `7ab7444`. Remote to be added once the GitHub repo exists.
+4. **Open source from the start** — so the backend adapter interface (§3.3) is a public contract, not an internal detail. Adding a backend should mean writing one file that implements `AgentBackend`, with no changes to the host. Codex is the reference third-party adapter.
+
+## Still open
+
+- **Scope of v1 in §8:** anything marked ⏸ to pull in, or ✅ to cut?
+- **Per-worktree port allocation** (§11, item 1) — worktrees don't isolate ports; two agents running dev servers will collide. Currently deferred. Reconsider if you plan to run dev servers per agent.
+- **`--auto` policy:** which roles, if any, get auto-approved permissions by default. Dangerous knob; currently opt-in per session.

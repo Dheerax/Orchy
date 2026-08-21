@@ -1,0 +1,60 @@
+{
+  "name": "orchy",
+  "displayName": "Orchy",
+  "description": "Multi-agent coding orchestration for VS Code — a terminal grid of isolated agents, driven by an orchestrator, with live topology.",
+  "version": "0.0.1",
+  "license": "MIT",
+  "publisher": "orchy",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dheer/Orchy.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "orchy.showState",
+        "title": "Orchy: Show Pipeline State"
+      }
+    ],
+    "configuration": {
+      "title": "Orchy",
+      "properties": {
+        "orchy.baseBranch": {
+          "type": "string",
+          "default": "main",
+          "description": "Branch that agent worktrees are created from and merged back into."
+        },
+        "orchy.visibleSlots": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 4,
+          "description": "How many agent terminals are visible in the editor grid at once. Sessions beyond this run detached."
+        },
+        "orchy.autoPromoteOnBlocked": {
+          "type": "boolean",
+          "default": true,
+          "description": "When a session needs input, bring its terminal into a visible grid slot. Never steals focus."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.0"
+  }
+}
