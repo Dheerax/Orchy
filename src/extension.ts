@@ -87,6 +87,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   });
 
+  // Only worth showing once agents overflow a single page.
+  const pageStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  pageStatus.command = 'orchy.nextPage';
+  context.subscriptions.push(pageStatus);
+
+  const refreshPageStatus = (): void => {
+    if (grid.pages > 1) {
+      pageStatus.text = `$(layout) Agents ${grid.currentPage + 1}/${grid.pages}`;
+      pageStatus.tooltip = 'Orchy: next page of agents';
+      pageStatus.show();
+    } else {
+      pageStatus.hide();
+    }
+  };
+  registry.on('changed', refreshPageStatus);
+
   const pick = async (placeHolder: string): Promise<string | undefined> => {
     const sessions = registry.all().filter((s) => s.status !== 'archived');
     if (sessions.length === 0) {
@@ -126,6 +142,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('orchy.showGraph', () => GraphPanel.show(registry, worktrees)),
+
+    vscode.commands.registerCommand('orchy.nextPage', () => {
+      grid.nextPage();
+      refreshPageStatus();
+    }),
+
+    vscode.commands.registerCommand('orchy.previousPage', () => {
+      grid.previousPage();
+      refreshPageStatus();
+    }),
 
     vscode.commands.registerCommand('orchy.focusSession', (arg?: unknown) => {
       const id = idOf(arg);

@@ -2,7 +2,7 @@
   "name": "orchy",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code \u2014 a grid of isolated agents, driven by an orchestrator, with live topology.",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -95,6 +95,16 @@
       {
         "command": "orchy.purgeAll",
         "title": "Orchy: Clear All Sessions"
+      },
+      {
+        "command": "orchy.nextPage",
+        "title": "Orchy: Next Page of Agents",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "orchy.previousPage",
+        "title": "Orchy: Previous Page of Agents",
+        "icon": "$(arrow-left)"
       }
     ],
     "menus": {
@@ -169,10 +179,10 @@
         },
         "orchy.visibleSlots": {
           "type": "number",
-          "default": 2,
+          "default": 12,
           "minimum": 1,
-          "maximum": 4,
-          "description": "How many agent terminals are visible in the editor grid at once. Sessions beyond this keep running, detached."
+          "maximum": 12,
+          "description": "How many agent terminals share the editor grid at once. The layout adapts to the count (two side by side, three as two-over-one, twelve as three rows of four). Sessions beyond this paginate."
         },
         "orchy.autoPromoteOnBlocked": {
           "type": "boolean",
@@ -195,7 +205,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node out/core/stateLayer.test.js && node out/backends/binaryResolution.test.js && node out/core/integration.test.js && node mcp/smoke.mjs"
+    "test": "npm run compile && node out/core/stateLayer.test.js && node out/backends/binaryResolution.test.js && node out/ui/gridLayout.test.js && node out/core/integration.test.js && node mcp/smoke.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
