@@ -95,19 +95,34 @@ export class Orchestrator extends EventEmitter {
       contract: { forbiddenCommands: [...DEFAULT_FORBIDDEN_COMMANDS] },
     });
 
+    const opts = {
+      sessionId: id,
+      task: this.decorateTask(req.task, deliverables, worktree?.path),
+      directory,
+      agent: req.agent,
+      model: req.model,
+      autoApprove: req.autoApprove,
+    };
+
     try {
-      const handle = await this.backend.spawn({
-        sessionId: id,
-        task: this.decorateTask(req.task, deliverables, worktree?.path),
-        directory,
-        agent: req.agent,
-        model: req.model,
-        autoApprove: req.autoApprove,
-      });
-      this.handles.set(id, handle);
-      this.attach(id, handle, req.budgetCap);
-      this.registry.record({ type: 'attached', session: id, handle: handle.id });
-      this.registry.record({ type: 'status', session: id, status: 'running' });
+      // Subscribe between creating the session and prompting it. Doing both in
+      // one call meant the first events could land before anyone was listening,
+      // which showed up as the last-spawned agent looking stuck.
+      let handle: BackendHandle;
+      if (this.backend.prepare && this.backend.begin) {
+        handle = await this.backend.prepare(opts);
+        this.handles.set(id, handle);
+        this.attach(id, handle, req.budgetCap);
+        this.registry.record({ type: 'attached', session: id, handle: handle.id });
+        this.registry.record({ type: 'status', session: id, status: 'running' });
+        await this.backend.begin(handle, opts.task);
+      } else {
+        handle = await this.backend.spawn(opts);
+        this.handles.set(id, handle);
+        this.attach(id, handle, req.budgetCap);
+        this.registry.record({ type: 'attached', session: id, handle: handle.id });
+        this.registry.record({ type: 'status', session: id, status: 'running' });
+      }
     } catch (err) {
       this.registry.record({
         type: 'status',

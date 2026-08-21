@@ -487,8 +487,13 @@ export class WorkspacePanel {
   function cardHtml(s) {
     const working = s.status === 'running' || s.status === 'spawning';
     const caret = working ? '<span class="caret"></span>' : '';
-    const body = s.transcript.length
-      ? s.transcript.map(turnHtml).join('') + caret
+    // A turn with no renderable parts produces '', so a transcript can be
+    // non-empty and still render to nothing. Decide the empty state on what
+    // actually came out, not on the array length — otherwise a queued agent
+    // shows a blank void that is indistinguishable from a broken one.
+    const turns = s.transcript.map(turnHtml).join('');
+    const body = turns
+      ? turns + caret
       : '<div class="waiting">waiting for the first turn…' + caret + '</div>';
 
     const files = s.changes.map(c =>

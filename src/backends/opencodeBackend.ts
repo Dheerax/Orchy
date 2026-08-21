@@ -170,14 +170,25 @@ export class OpenCodeBackend implements AgentBackend {
   }
 
   async spawn(opts: SpawnOpts): Promise<BackendHandle> {
+    const handle = await this.prepare(opts);
+    await this.begin(handle, opts.task);
+    return handle;
+  }
+
+  /** Create the session without starting work, so a caller can subscribe first. */
+  async prepare(opts: SpawnOpts): Promise<BackendHandle> {
     await this.ensureServer();
     const session = await this.client.createSession({
       directory: opts.directory,
       agent: opts.agent,
       model: parseModel(opts.model),
     });
-    await this.client.prompt(session.id, opts.task);
     return { id: session.id, directory: opts.directory };
+  }
+
+  /** Send the opening prompt. Split from prepare so no early events are missed. */
+  async begin(handle: BackendHandle, task: string): Promise<void> {
+    await this.client.prompt(handle.id, task);
   }
 
   async send(handle: BackendHandle, text: string): Promise<void> {
@@ -245,14 +256,17 @@ export class OpenCodeBackend implements AgentBackend {
       role: message.type === 'user' ? 'user' : message.type === 'system' ? 'system' : 'assistant',
       parts: (message.content ?? [])
         .map((part) => {
-          if (part.type === 'text' && part.text) {
-            return { kind: 'text' as const, text: part.text };
+          if (part.type === 'tool') {
+            return { kind: 'tool' as const, text: part.name ?? 'tool' };
           }
           if (part.type === 'reasoning' && part.text) {
             return { kind: 'reasoning' as const, text: part.text };
           }
-          if (part.type === 'tool') {
-            return { kind: 'tool' as const, text: part.name ?? 'tool' };
+          // Anything else carrying text is shown as text. Matching only on
+          // known type names meant an unfamiliar part silently vanished, and a
+          // turn whose parts all vanish renders as an empty pane.
+          if (typeof part.text === 'string' && part.text.length > 0) {
+            return { kind: 'text' as const, text: part.text };
           }
           return undefined;
         })

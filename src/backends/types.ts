@@ -59,6 +59,16 @@ export interface AgentBackend {
   isAvailable(): Promise<boolean>;
 
   spawn(opts: SpawnOpts): Promise<BackendHandle>;
+
+  /**
+   * Optional two-step start: create the session, then send the opening prompt.
+   *
+   * Subscribing between the two closes a real gap — a backend that starts work
+   * during `spawn` can emit its first events before anyone is listening, so the
+   * agent that finishes its round-trip last also has the least visible progress.
+   */
+  prepare?(opts: SpawnOpts): Promise<BackendHandle>;
+  begin?(handle: BackendHandle, task: string): Promise<void>;
   send(handle: BackendHandle, text: string): Promise<void>;
   interrupt(handle: BackendHandle, reason: string): Promise<void>;
   kill(handle: BackendHandle): Promise<void>;
