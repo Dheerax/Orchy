@@ -12,8 +12,7 @@ import {
   WorktreeManager,
 } from './core/worktreeManager';
 import { DaemonServer } from './daemon/server';
-import { GraphPanel } from './ui/graphPanel';
-import { GridManager } from './ui/gridManager';
+import { WorkspacePanel } from './ui/workspacePanel';
 import { SessionTreeProvider } from './ui/sessionTree';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -36,12 +35,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry.reconcileForFreshWindow();
 
   const output = vscode.window.createOutputChannel('Orchy');
-  const grid = new GridManager(registry, backend, (message) => output.appendLine(message));
   const tree = new SessionTreeProvider(registry);
   const version = String(context.extension.packageJSON.version ?? 'unknown');
   const daemon = new DaemonServer(registry, orchestrator, orchyDir, root, version);
 
-  context.subscriptions.push(grid, tree.register(), { dispose: () => daemon.dispose() });
+  context.subscriptions.push(tree.register(), { dispose: () => daemon.dispose() });
 
   context.subscriptions.push(output);
 
@@ -61,12 +59,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Reclaim agents a previous window left running before anything reconciles
   // them away, so a reload does not strand live work off-screen.
   void orchestrator.adoptExisting().then((adopted) => {
-    for (const session of adopted) {
-      const handle = orchestrator.handleOf(session.id);
-      if (handle) {
-        grid.open(session, handle);
-      }
-    }
     if (adopted.length > 0) {
       output.appendLine(`Reconnected ${adopted.length} session(s) from a previous window.`);
     }
@@ -82,48 +74,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
   }
 
-  // Backend handles are per-window: a session replayed from the log has no live
-  // handle until this window spawns it, so grid actions degrade to reveal-only.
-  orchestrator.on('spawned', (session: Session) => {
-    const handle = orchestrator.handleOf(session.id);
-    if (handle) {
-      grid.open(session, handle);
-    }
-    if (config.get<string>('paneMode', 'dashboard') === 'dashboard') {
-      // In dashboard mode nothing else would appear on screen, so surface the
-      // panel that is meant to be the hub.
-      GraphPanel.show(registry, worktrees);
-    }
-    GraphPanel.refreshIfOpen();
+  // A spawn should put the workspace on screen, since it is the only surface
+  // where the new agent will appear.
+  orchestrator.on('spawned', () => {
+    WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id));
   });
-
-  registry.on('changed', () => {
-    for (const session of registry.all()) {
-      if (session.status !== 'waiting_input') {
-        continue;
-      }
-      const handle = orchestrator.handleOf(session.id);
-      if (handle && !grid.has(session.id)) {
-        grid.promote(session, handle);
-      }
-    }
-  });
-
-  // Only worth showing once agents overflow a single page.
-  const pageStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  pageStatus.command = 'orchy.nextPage';
-  context.subscriptions.push(pageStatus);
-
-  const refreshPageStatus = (): void => {
-    if (grid.pages > 1) {
-      pageStatus.text = `$(layout) Agents ${grid.currentPage + 1}/${grid.pages}`;
-      pageStatus.tooltip = 'Orchy: next page of agents';
-      pageStatus.show();
-    } else {
-      pageStatus.hide();
-    }
-  };
-  registry.on('changed', refreshPageStatus);
 
   const pick = async (placeHolder: string): Promise<string | undefined> => {
     const sessions = registry.all().filter((s) => s.status !== 'archived');
@@ -163,42 +118,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('orchy.showGraph', () => GraphPanel.show(registry, worktrees)),
+    vscode.commands.registerCommand('orchy.showGraph', () => WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id))),
 
-    vscode.commands.registerCommand('orchy.tileAll', async () => {
-      await vscode.workspace
-        .getConfiguration('orchy')
-        .update('paneMode', 'grid', vscode.ConfigurationTarget.Workspace);
-      for (const session of registry.all()) {
-        const handle = orchestrator.handleOf(session.id);
-        if (handle && !['archived', 'complete', 'failed'].includes(session.status)) {
-          grid.open(session, handle);
-        }
-      }
-    }),
 
-    vscode.commands.registerCommand('orchy.nextPage', () => {
-      grid.nextPage();
-      refreshPageStatus();
-    }),
 
-    vscode.commands.registerCommand('orchy.previousPage', () => {
-      grid.previousPage();
-      refreshPageStatus();
-    }),
 
     vscode.commands.registerCommand('orchy.focusSession', (arg?: unknown) => {
       const id = idOf(arg);
       if (!id) {
         return;
       }
-      const session = registry.get(id);
-      const handle = orchestrator.handleOf(id);
-      if (session && handle && !grid.has(id)) {
-        grid.promote(session, handle);
-      } else {
-        grid.reveal(id);
-      }
+      WorkspacePanel.show(registry, worktrees, backend, (i) => orchestrator.handleOf(i));
+      WorkspacePanel.refreshIfOpen();
     }),
 
     vscode.commands.registerCommand('orchy.spawn', async () => {
@@ -271,8 +202,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (session && session.status !== 'archived') {
           await orchestrator.archive(target, { force: true });
         }
-        grid.detach(target);
-      } catch {
+        } catch {
         // Worktree may already be gone; removal from the list still proceeds.
       }
       registry.record({ type: 'purged', session: target });
@@ -297,7 +227,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           if (session.status !== 'archived') {
             await orchestrator.archive(session.id, { force: true });
           }
-          grid.detach(session.id);
         } catch {
           // Best effort — clearing the list must not be blockable by a stuck worktree.
         }
@@ -352,8 +281,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       try {
         await orchestrator.kill(target);
-        grid.detach(target);
-      } catch (err) {
+        } catch (err) {
         fail(err);
       }
     }),
@@ -366,13 +294,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const session = registry.get(target);
       try {
         await orchestrator.archive(target);
-        grid.detach(target);
-      } catch (err) {
+        } catch (err) {
         if (err instanceof WorktreeLockedError) {
           // Half-done rather than failed: git no longer tracks it, the folder
           // survives. Say that, and let the session leave the list regardless.
-          grid.detach(target);
-          registry.record({ type: 'archived', session: target });
+              registry.record({ type: 'archived', session: target });
           void vscode.window.showWarningMessage(err.message, 'Prune worktrees').then((choice) => {
             if (choice) {
               void vscode.commands.executeCommand('orchy.pruneWorktrees');
@@ -393,8 +319,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (typed && typed === session?.worktree?.branch) {
           try {
             await orchestrator.archive(target, { force: true });
-            grid.detach(target);
-          } catch (inner) {
+                } catch (inner) {
             fail(inner);
           }
         } else if (typed !== undefined) {
@@ -438,7 +363,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         groups: [{ size: 0.5 }, { size: 0.5 }],
       });
       await vscode.commands.executeCommand('workbench.view.extension.orchy');
-      GraphPanel.show(registry, worktrees);
+      WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id));
       void vscode.window.showInformationMessage(
         'Orchy: layout ready. Agent terminals fill the editor columns; the topology panel is beside them.'
       );

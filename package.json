@@ -2,7 +2,7 @@
   "name": "orchy",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code \u2014 a grid of isolated agents, driven by an orchestrator, with live topology.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -53,8 +53,8 @@
       },
       {
         "command": "orchy.showGraph",
-        "title": "Orchy: Show Topology",
-        "icon": "$(type-hierarchy)"
+        "title": "Orchy: Open Workspace",
+        "icon": "$(layout)"
       },
       {
         "command": "orchy.setupLayout",
@@ -95,21 +95,6 @@
       {
         "command": "orchy.purgeAll",
         "title": "Orchy: Clear All Sessions"
-      },
-      {
-        "command": "orchy.nextPage",
-        "title": "Orchy: Next Page of Agents",
-        "icon": "$(arrow-right)"
-      },
-      {
-        "command": "orchy.previousPage",
-        "title": "Orchy: Previous Page of Agents",
-        "icon": "$(arrow-left)"
-      },
-      {
-        "command": "orchy.tileAll",
-        "title": "Orchy: Tile All Agents In Grid",
-        "icon": "$(layout)"
       }
     ],
     "menus": {
@@ -139,11 +124,6 @@
           "command": "orchy.pruneWorktrees",
           "when": "view == orchy.sessions",
           "group": "1_clear@2"
-        },
-        {
-          "command": "orchy.tileAll",
-          "when": "view == orchy.sessions",
-          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -187,40 +167,10 @@
           "default": "main",
           "description": "Branch that agent worktrees are created from and merged back into."
         },
-        "orchy.visibleSlots": {
-          "type": "number",
-          "default": 12,
-          "minimum": 1,
-          "maximum": 12,
-          "description": "How many agent terminals share the editor grid at once. The layout adapts to the count (two side by side, three as two-over-one, twelve as three rows of four). Sessions beyond this paginate."
-        },
-        "orchy.autoPromoteOnBlocked": {
-          "type": "boolean",
-          "default": true,
-          "description": "When a session needs input, bring its terminal into a visible grid slot. Never steals focus."
-        },
         "orchy.globalBudgetCap": {
           "type": "number",
           "default": 0,
           "description": "Stop any session whose estimated spend passes this. 0 disables the cap."
-        },
-        "orchy.useBackendTui": {
-          "type": "boolean",
-          "default": false,
-          "description": "Run OpenCode's own terminal UI in agent panes instead of Orchy's transcript view. The backend TUI is interactive but has been seen to render an empty prompt while the agent is working."
-        },
-        "orchy.paneMode": {
-          "type": "string",
-          "enum": [
-            "dashboard",
-            "grid"
-          ],
-          "default": "dashboard",
-          "enumDescriptions": [
-            "Agents live in the topology panel; click one to open its pane. Keeps the editor free for your own work.",
-            "Tile every visible agent across the editor at once."
-          ],
-          "description": "How agent sessions are shown."
         }
       }
     }

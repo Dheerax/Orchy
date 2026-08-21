@@ -1,8 +1,8 @@
 /**
- * Grid geometry for the agent pane.
+ * Grid geometry for the workspace panel.
  *
  * Pure functions, no VS Code imports — the arithmetic is fiddly enough to be
- * worth testing directly rather than by squinting at an editor.
+ * worth testing directly rather than by squinting at a rendered layout.
  */
 
 /** Hard ceiling on panes shown at once. Beyond this, sessions paginate. */
