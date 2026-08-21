@@ -243,6 +243,7 @@ function toSpawnRequest(body: Record<string, unknown>): SpawnRequest {
   return {
     role: String(body.role ?? 'agent'),
     agent: body.agent ? String(body.agent) : undefined,
+    dependsOn: Array.isArray(body.depends_on) ? body.depends_on.map(String) : undefined,
     task: String(body.task ?? ''),
     name: body.name ? String(body.name) : undefined,
     model: body.model ? String(body.model) : undefined,

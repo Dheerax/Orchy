@@ -98,7 +98,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'orchy-int-'));
 const repo = path.join(tmp, 'demo');
 fs.mkdirSync(repo);
 
-const git = (args: string[], cwd = repo): string =>
+const git = (args: string[], cwd: string = repo): string =>
   execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
 git(['init', '-b', 'main']);
@@ -229,6 +229,71 @@ void (async (): Promise<void> => {
     'and it says why',
     emptyChecked?.deliverables[0].detail,
     'file is empty: GUIDE.md'
+  );
+
+  console.log('\ndependencies');
+
+  const base = await orchestrator.spawn({
+    role: 'base',
+    task: 'Create BASE.md',
+    deliverables: [{ kind: 'file', spec: 'BASE.md', verified: false }],
+  });
+  const startedBefore = backend.spawnedWith.length;
+  const dependent = await orchestrator.spawn({
+    role: 'dependent',
+    task: 'Build on the base',
+    deliverables: [{ kind: 'file', spec: 'DEP.md', verified: false }],
+    dependsOn: [base.id],
+  });
+
+  check('a dependent session is queued, not started', registry.get(dependent.id)?.status, 'queued');
+  check('it records what it waits on', registry.get(dependent.id)?.dependsOn, [base.id]);
+  check('the backend was never asked to start it', backend.spawnedWith.length, startedBefore);
+
+  // The base agent does its work and commits, so there is something to inherit.
+  fs.writeFileSync(path.join(base.worktree!.path, 'BASE.md'), '# base\n');
+  git(['add', '-A'], base.worktree!.path);
+  git(['commit', '-m', 'base work'], base.worktree!.path);
+
+  const released = onceVerified(orchestrator, base.id);
+  backend.emit(base.id, { kind: 'status', status: 'idle_unverified' });
+  await released;
+  await new Promise((r) => setTimeout(r, 400));
+
+  check('completing the base releases the dependent', registry.get(dependent.id)?.status, 'running');
+  check('and the backend started it', backend.spawnedWith.length, startedBefore + 1);
+  ok(
+    'the dependent inherited the base commit',
+    fs.existsSync(path.join(dependent.worktree!.path, 'BASE.md'))
+  );
+
+  console.log('\na dead dependency does not strand anyone');
+
+  const doomed = await orchestrator.spawn({ role: 'doomed', task: 'x', deliverables: [] });
+  const orphan = await orchestrator.spawn({
+    role: 'orphan',
+    task: 'y',
+    deliverables: [],
+    dependsOn: [doomed.id],
+  });
+  check('orphan starts queued', registry.get(orphan.id)?.status, 'queued');
+
+  await orchestrator.kill(doomed.id);
+  const other = await orchestrator.spawn({
+    role: 'other',
+    task: 'z',
+    deliverables: [{ kind: 'file', spec: 'OTHER.md', verified: false }],
+  });
+  fs.writeFileSync(path.join(other.worktree!.path, 'OTHER.md'), 'x\n');
+  const settled = onceVerified(orchestrator, other.id);
+  backend.emit(other.id, { kind: 'status', status: 'idle_unverified' });
+  await settled;
+  await new Promise((r) => setTimeout(r, 300));
+
+  check('orphan fails rather than waiting forever', registry.get(orphan.id)?.status, 'failed');
+  ok(
+    'and says which dependency killed it',
+    (registry.get(orphan.id)?.lastError ?? '').includes(doomed.id)
   );
 
   console.log('\nmerge gating');

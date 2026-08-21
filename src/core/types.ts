@@ -9,6 +9,8 @@
 export type SessionStatus =
   /** Worktree and terminal are being created. */
   | 'spawning'
+  /** Waiting on other sessions to finish before it may start. */
+  | 'queued'
   /** Backend is actively working. */
   | 'running'
   /** Blocked on a human. The state the whole UI exists to surface. */
@@ -102,6 +104,8 @@ export interface Session {
     model?: string;
   };
   worktree?: WorktreeRef;
+  /** Sessions that must complete, and be merged in, before this one starts. */
+  dependsOn: string[];
   surface: {
     terminalId?: string;
     gridSlot?: number;
@@ -138,6 +142,7 @@ export type OrchyEvent =
       worktree?: WorktreeRef;
       deliverables: Deliverable[];
       contract?: Contract;
+      dependsOn?: string[];
     })
   | (EventBase & { type: 'status'; status: SessionStatus; error?: string })
   | (EventBase & { type: 'tool'; name: string; target?: string })

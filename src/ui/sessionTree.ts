@@ -4,6 +4,7 @@ import { NEEDS_ATTENTION, Session, SessionStatus } from '../core/types';
 
 const STATUS_ICON: Record<SessionStatus, { icon: string; color?: string }> = {
   spawning: { icon: 'loading~spin' },
+  queued: { icon: 'watch' },
   running: { icon: 'play-circle', color: 'charts.blue' },
   waiting_input: { icon: 'question', color: 'charts.yellow' },
   idle_unverified: { icon: 'warning', color: 'charts.orange' },
@@ -124,6 +125,9 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<Node> {
     if (session.status === 'idle_unverified') {
       const missing = session.deliverables.filter((d) => !d.verified).length;
       return missing > 0 ? `${missing} deliverable(s) missing` : 'unverified';
+    }
+    if (session.status === 'queued') {
+      return `waiting on ${session.dependsOn.join(', ')}`;
     }
     if (session.status === 'failed') {
       return 'failed';

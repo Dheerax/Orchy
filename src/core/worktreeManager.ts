@@ -315,6 +315,29 @@ export class WorktreeManager {
   }
 
   /**
+   * Merge another agent's branch into this worktree.
+   *
+   * This is what makes a dependency mean something for code rather than just
+   * ordering: a session that depends on another starts from its predecessor's
+   * work, not from the base it was cut at. Returns the conflicting paths, empty
+   * when the merge is clean.
+   */
+  mergeInto(worktreePath: string, branch: string): string[] {
+    try {
+      this.git(['merge', '--no-edit', branch], worktreePath);
+      return [];
+    } catch (err) {
+      const conflicts = this.dirtyFiles(worktreePath)
+        .filter((line) => /^(UU|AA|DU|UD|AU|UA|DD)/.test(line))
+        .map((line) => line.slice(2).trim());
+      if (conflicts.length === 0) {
+        throw err;
+      }
+      return conflicts;
+    }
+  }
+
+  /**
    * Merge an agent branch back into the base branch.
    * Rebases onto a fresh base first so history stays linear and conflicts surface
    * in the agent's worktree rather than on the base branch.

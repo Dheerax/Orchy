@@ -100,7 +100,8 @@ const TOOLS = [
     description:
       'Start an agent session in its own git worktree and place it in the IDE grid. ' +
       'Use one session per decoupled area of work (ui, backend, docs, ml). Always declare ' +
-      'deliverables — without them the session can never reach "complete".',
+      'deliverables — without them the session can never reach "complete". For work that ' +
+      'builds on another agent, pass depends_on rather than waiting and spawning later.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -120,6 +121,15 @@ const TOOLS = [
         name: { type: 'string', description: 'Short human label.' },
         model: { type: 'string', description: 'provider/model, e.g. opencode/ling-3.0-flash-free' },
         deliverables: DELIVERABLES_SCHEMA,
+        depends_on: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Session ids that must finish first. The session is held until every one of them ' +
+            'verifies complete, then their branches are merged into its worktree before it ' +
+            'starts — so a dependency means "after, and on top of", not merely "after". Use ' +
+            'this instead of waiting yourself and spawning later.',
+        },
         budget_cap: { type: 'number', description: 'Stop the session past this spend.' },
         share_workspace: {
           type: 'boolean',

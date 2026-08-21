@@ -6,6 +6,12 @@ import { Deliverable, DEFAULT_FORBIDDEN_COMMANDS, Session, TERMINAL_STATUSES } f
 import { WorktreeManager } from './worktreeManager';
 
 export interface SpawnRequest {
+  /**
+   * Sessions that must complete before this one starts. Their branches are
+   * merged into this session's worktree at release, so a dependency means
+   * "after, and on top of" rather than only "after".
+   */
+  dependsOn?: string[];
   /** Free-text label used for the id and grouping. Not sent to the backend. */
   role: string;
   /**
@@ -39,6 +45,8 @@ export class Orchestrator extends EventEmitter {
   private handles = new Map<string, BackendHandle>();
   private unsubscribes = new Map<string, () => void>();
   private counters = new Map<string, number>();
+  /** Sessions held until their dependencies complete. */
+  private queued = new Map<string, { request: SpawnRequest }>();
 
   constructor(
     private readonly registry: SessionRegistry,
@@ -81,7 +89,8 @@ export class Orchestrator extends EventEmitter {
     const worktree = req.shareWorkspace
       ? undefined
       : this.worktrees.create(id, this.config.baseBranch);
-    const directory = worktree?.path ?? this.worktrees.root;
+
+    const dependsOn = (req.dependsOn ?? []).filter((d) => this.registry.get(d));
 
     this.registry.record({
       type: 'spawned',
@@ -93,12 +102,41 @@ export class Orchestrator extends EventEmitter {
       worktree,
       deliverables,
       contract: { forbiddenCommands: [...DEFAULT_FORBIDDEN_COMMANDS] },
+      dependsOn,
     });
 
+    if (dependsOn.length > 0 && !this.dependenciesMet(dependsOn)) {
+      // Held rather than started. Release happens when the last dependency
+      // verifies, so its work exists before this session is told to build on it.
+      this.queued.set(id, { request: req });
+      const session = this.registry.get(id);
+      if (!session) {
+        throw new Error(`session ${id} vanished immediately after spawn`);
+      }
+      this.emit('spawned', session);
+      return session;
+    }
+
+    await this.start(id, req);
+
+    const session = this.registry.get(id);
+    if (!session) {
+      throw new Error(`session ${id} vanished immediately after spawn`);
+    }
+    this.emit('spawned', session);
+    return session;
+  }
+
+  /** Connect a session to its backend and send the opening prompt. */
+  private async start(id: string, req: SpawnRequest): Promise<void> {
+    const session = this.registry.get(id);
+    if (!session) {
+      return;
+    }
     const opts = {
       sessionId: id,
-      task: this.decorateTask(req.task, deliverables, worktree?.path),
-      directory,
+      task: this.decorateTask(req.task, session.deliverables, session.worktree?.path),
+      directory: session.worktree?.path ?? this.worktrees.root,
       agent: req.agent,
       model: req.model,
       autoApprove: req.autoApprove,
@@ -131,13 +169,89 @@ export class Orchestrator extends EventEmitter {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
 
-    const session = this.registry.get(id);
-    if (!session) {
-      throw new Error(`session ${id} vanished immediately after spawn`);
+  private dependenciesMet(ids: string[]): boolean {
+    return ids.every((d) => this.registry.get(d)?.status === 'complete');
+  }
+
+  /** A dependency that can never complete should not leave dependents waiting forever. */
+  private deadDependency(ids: string[]): string | undefined {
+    return ids.find((d) => {
+      const status = this.registry.get(d)?.status;
+      return status === 'failed' || status === 'archived' || status === undefined;
+    });
+  }
+
+  /**
+   * Start any queued session whose dependencies are now satisfied.
+   *
+   * Called whenever a session completes. Merging each dependency's branch in
+   * first is the point: without it a dependency would only mean "later", and the
+   * dependent would start from a base that predates the work it is meant to
+   * build on.
+   */
+  private async releaseReady(): Promise<void> {
+    for (const [id, entry] of [...this.queued]) {
+      const session = this.registry.get(id);
+      if (!session) {
+        this.queued.delete(id);
+        continue;
+      }
+
+      const dead = this.deadDependency(session.dependsOn);
+      if (dead) {
+        this.queued.delete(id);
+        this.registry.record({
+          type: 'status',
+          session: id,
+          status: 'failed',
+          error: `Dependency ${dead} will never complete, so this session cannot start.`,
+        });
+        continue;
+      }
+      if (!this.dependenciesMet(session.dependsOn)) {
+        continue;
+      }
+
+      this.queued.delete(id);
+
+      if (session.worktree) {
+        const conflicts: string[] = [];
+        for (const dep of session.dependsOn) {
+          const branch = this.registry.get(dep)?.worktree?.branch;
+          if (!branch) {
+            continue;
+          }
+          try {
+            conflicts.push(...this.worktrees.mergeInto(session.worktree.path, branch));
+          } catch (err) {
+            this.registry.record({
+              type: 'status',
+              session: id,
+              status: 'failed',
+              error: `Could not merge ${branch}: ${err instanceof Error ? err.message : String(err)}`,
+            });
+            continue;
+          }
+        }
+        if (conflicts.length > 0) {
+          // A human has to choose here. Starting the agent on a conflicted tree
+          // would just produce confident work on top of merge markers.
+          this.registry.record({
+            type: 'status',
+            session: id,
+            status: 'waiting_input',
+            error:
+              `Merging dependencies left conflicts in ${conflicts.join(', ')}. ` +
+              `Resolve them in ${session.worktree.path}, then verify to release this session.`,
+          });
+          continue;
+        }
+      }
+
+      await this.start(id, entry.request);
     }
-    this.emit('spawned', session);
-    return session;
   }
 
   /**
@@ -261,6 +375,9 @@ export class Orchestrator extends EventEmitter {
     await this.refreshUsage(id);
 
     const after = this.registry.get(id);
+    if (after?.status === 'complete') {
+      await this.releaseReady();
+    }
     // Always announce the outcome, not just success — the auto-verify triggered
     // by a backend going idle is fire-and-forget, so this is the only signal a
     // caller has that the check actually finished.

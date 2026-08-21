@@ -239,14 +239,6 @@ export class WorkspacePanel {
         pages,
         blocked: this.registry.needingAttention().length,
         archived: this.registry.all().length - live.length,
-        // The topology covers every live agent, not just this page, so the map
-        // stays whole while the panes below it page through.
-        graph: live.map((s) => ({
-          id: s.id,
-          role: s.role,
-          status: s.status,
-          onPage: onPage.some((p) => p.id === s.id),
-        })),
       },
     });
   }
@@ -340,21 +332,6 @@ export class WorkspacePanel {
 
   #grid { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
   .row { flex: 1 1 0; display: flex; gap: 6px; min-height: 0; }
-
-  /* Topology: who exists and what state they are in, all at once. */
-  #topo { flex: 0 0 auto; }
-  #topo svg { display: block; width: 100%; height: 54px; }
-  #topo .edge { stroke: var(--line); stroke-width: 1.2; fill: none; }
-  #topo .edge.active { stroke: var(--running); stroke-dasharray: 3 3;
-                       animation: flow 1.1s linear infinite; }
-  #topo .edge.blocked { stroke: var(--blocked); }
-  @keyframes flow { to { stroke-dashoffset: -12; } }
-  body.vscode-reduce-motion #topo .edge.active { animation: none; }
-  #topo .node { cursor: pointer; }
-  #topo .node text { font-size: 8.5px; fill: var(--muted); text-anchor: middle; }
-  #topo .node.onpage text { fill: var(--fg); }
-  #topo circle.hub { fill: var(--card); stroke: var(--line); }
-  #topo text.hublabel { font-size: 8.5px; fill: var(--muted); text-anchor: middle; }
 
   .pager { display: flex; align-items: center; gap: 4px; margin-left: auto; }
   .pager button { background: none; border: 1px solid var(--line); border-radius: 5px;
@@ -460,7 +437,6 @@ export class WorkspacePanel {
   <span class="hint" id="hint"></span>
   <span class="pager" id="pager"></span>
 </header>
-<div id="topo"></div>
 <div id="grid"></div>
 <script nonce="${nonce}">
   const api = acquireVsCodeApi();
@@ -468,7 +444,6 @@ export class WorkspacePanel {
   const count = document.getElementById('count');
   const hint = document.getElementById('hint');
   const pager = document.getElementById('pager');
-  const topo = document.getElementById('topo');
   let scrollMemory = {};
 
   const esc = s => String(s).replace(/[&<>"']/g, c =>
@@ -530,38 +505,6 @@ export class WorkspacePanel {
     document.body.style.setProperty('--pane-line', String(line));
   }
 
-  const STATUS_FILL = {
-    running: 'var(--running)', waiting_input: 'var(--blocked)',
-    idle_unverified: 'var(--unverified)', complete: 'var(--done)',
-    failed: 'var(--failed)', detached: 'var(--muted)', spawning: 'var(--muted)',
-  };
-
-  // Hub and spoke: you on the left, every live agent fanned out from it. Only
-  // relationships Orchy actually records are drawn — no invented edges.
-  function renderTopo(nodes) {
-    if (!nodes.length) { topo.innerHTML = ''; return; }
-    const W = topo.clientWidth || 800, H = 54, hubX = 26, hubY = H / 2, y = hubY - 12;
-    const step = nodes.length > 1 ? (W - 70) / (nodes.length - 1) : 0;
-    const xOf = i => nodes.length > 1 ? 52 + i * step : W / 2;
-
-    let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">';
-    nodes.forEach((n, i) => {
-      const cls = n.status === 'running' ? 'edge active'
-        : (n.status === 'waiting_input' || n.status === 'idle_unverified') ? 'edge blocked' : 'edge';
-      svg += '<path class="' + cls + '" d="M' + hubX + ' ' + hubY + ' C' + (hubX + 30) + ' ' + hubY +
-             ',' + (xOf(i) - 30) + ' ' + y + ',' + xOf(i) + ' ' + y + '"/>';
-    });
-    svg += '<circle class="hub" cx="' + hubX + '" cy="' + hubY + '" r="7"/>' +
-           '<text class="hublabel" x="' + hubX + '" y="' + (hubY + 20) + '">you</text>';
-    nodes.forEach((n, i) => {
-      svg += '<g class="node' + (n.onPage ? ' onpage' : '') + '" data-id="' + esc(n.id) + '">' +
-             '<circle cx="' + xOf(i) + '" cy="' + y + '" r="5" fill="' +
-             (STATUS_FILL[n.status] || 'var(--muted)') + '"/>' +
-             '<text x="' + xOf(i) + '" y="' + (hubY + 14) + '">' + esc(n.id) + '</text></g>';
-    });
-    topo.innerHTML = svg + '</svg>';
-  }
-
   function renderPager(d) {
     if (d.pages <= 1) { pager.innerHTML = ''; return; }
     pager.innerHTML =
@@ -571,7 +514,6 @@ export class WorkspacePanel {
   }
 
   function render(d) {
-    renderTopo(d.graph || []);
     renderPager(d);
     for (const el of grid.querySelectorAll('.body')) {
       scrollMemory[el.id] = { top: el.scrollTop, atEnd: el.scrollHeight - el.scrollTop - el.clientHeight < 24 };
@@ -621,18 +563,6 @@ export class WorkspacePanel {
   pager.addEventListener('click', e => {
     const b = e.target.closest('[data-page]');
     if (b && !b.disabled) api.postMessage({ type: 'page', page: Number(b.dataset.page) });
-  });
-
-  topo.addEventListener('click', e => {
-    const n = e.target.closest('.node');
-    if (n) api.postMessage({ type: 'focus', id: n.dataset.id });
-  });
-
-  // The topology stretches to the panel, so it has to be redrawn on resize.
-  let resizeTimer;
-  window.addEventListener('resize', () => {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => api.postMessage({ type: 'ready' }), 120);
   });
 
   window.addEventListener('message', e => {
