@@ -33,6 +33,28 @@ They are shapes, not scripts. Adapt the tasks, fill in deliverables and
 contracts, then propose the result. Picking a known shape is more reliable than
 inventing one under time pressure.
 
+## 0c. Aim for width, not a chain
+
+A chain of agents is a single agent with extra steps. If every agent depends on
+the one before it, nothing runs in parallel and you have paid for isolation
+without buying anything.
+
+The shape to look for is **many agents depending on the same one**:
+
+```
+            ┌── api ──┐
+   schema ──┼── ui  ──┼── tests
+            └── docs ─┘
+```
+
+Three agents wait on `schema`; all three then run at once; `tests` fans in. One
+dependency edge each, three-way parallelism in the middle.
+
+Before proposing, count how many agents are in your widest stage. If the answer
+is one, the decomposition is a chain — go back and ask which parts genuinely
+need each other's output, and which merely felt sequential when you wrote them
+down.
+
 ## 1. Decompose by ownership, not by task list
 
 Split work so that **two agents rarely need the same file**. Split by area —

@@ -87,7 +87,7 @@ export class Orchestrator extends EventEmitter {
    * no orchestrator turns — and it means the pipeline advances on its own rather
    * than only when somebody thinks to look.
    */
-  private startWatching(intervalMs = 4000): void {
+  private startWatching(intervalMs = 2000): void {
     this.poller = setInterval(() => void this.sweep(), intervalMs);
   }
 

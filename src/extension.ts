@@ -167,6 +167,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await vscode.languages.setTextDocumentLanguage(doc, 'markdown');
     }),
 
+    vscode.commands.registerCommand('orchy.openTerminal', async (id?: unknown, side?: boolean) => {
+      const target = idOf(id) ?? (await pick('Open a terminal for which session?'));
+      if (!target) {
+        return;
+      }
+      const session = registry.get(target);
+      const handle = orchestrator.handleOf(target);
+      if (!session || !handle) {
+        void vscode.window.showWarningMessage(
+          `Orchy: ${target} is not connected in this window, so there is no live session to attach to.`
+        );
+        return;
+      }
+      const attach = backend.attachCommand(handle);
+      if (!attach) {
+        void vscode.window.showWarningMessage(
+          `Orchy: ${backend.displayName} cannot attach a terminal to a running session.`
+        );
+        return;
+      }
+      // A real terminal running the backend's own TUI: interactive, so you can
+      // type at the agent, which the transcript view deliberately cannot do.
+      const terminal = vscode.window.createTerminal({
+        name: `${session.id} · ${session.role}`,
+        location: side
+          ? { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false }
+          : { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+        cwd: session.worktree?.path,
+        shellPath: attach.command,
+        shellArgs: attach.args,
+        iconPath: new vscode.ThemeIcon('robot'),
+        isTransient: true,
+        // shellPath bypasses the user's shell, so no profile runs. A TUI that
+        // cannot identify the terminal may refuse to draw.
+        env: { TERM: 'xterm-256color' },
+      });
+      terminal.show(false);
+      output.appendLine(`[${target}] terminal: ${attach.command} ${attach.args.join(' ')}`);
+    }),
+
     vscode.commands.registerCommand('orchy.showPipeline', () => GraphPanel.show(registry)),
 
     vscode.commands.registerCommand('orchy.seedTemplates', async () => {

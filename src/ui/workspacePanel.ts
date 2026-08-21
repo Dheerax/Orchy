@@ -169,12 +169,19 @@ export class WorkspacePanel {
         break;
       case 'openTab':
       case 'openSide':
+        // The live terminal, not the transcript: attaching lets you type at the
+        // agent, which is the whole reason to open one rather than read one.
         if (msg.id) {
           await vscode.commands.executeCommand(
-            'orchy.openTranscript',
+            'orchy.openTerminal',
             msg.id,
             msg.type === 'openSide'
           );
+        }
+        break;
+      case 'openTranscript':
+        if (msg.id) {
+          await vscode.commands.executeCommand('orchy.openTranscript', msg.id, true);
         }
         break;
       case 'approvePlan':
@@ -535,8 +542,9 @@ export class WorkspacePanel {
         '<span class="role">' + esc(s.role) + '</span>' +
         (s.spend > 0 ? '<span class="spend">' + s.spend.toFixed(3) + '</span>' : '') +
         '<span class="icons">' +
-          '<button data-act="openTab" data-id="' + esc(s.id) + '" title="Open transcript in a tab">&#10697;</button>' +
-          '<button data-act="openSide" data-id="' + esc(s.id) + '" title="Open transcript to the side">&#8677;</button>' +
+          '<button data-act="openTab" data-id="' + esc(s.id) + '" title="Open a live terminal for this agent">&#10697;</button>' +
+          '<button data-act="openSide" data-id="' + esc(s.id) + '" title="Open a live terminal to the side">&#8677;</button>' +
+          '<button data-act="openTranscript" data-id="' + esc(s.id) + '" title="Open the transcript as a document">&#128196;</button>' +
           '<button class="danger" data-act="purge" data-id="' + esc(s.id) + '" title="Delete this session">&#10005;</button>' +
         '</span>' +
       '</div>' +

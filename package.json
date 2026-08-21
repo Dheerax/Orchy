@@ -2,7 +2,7 @@
   "name": "orchy",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code \u2014 a grid of isolated agents, driven by an orchestrator, with live topology.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -109,6 +109,11 @@
         "command": "orchy.showPipeline",
         "title": "Orchy: Open Pipeline Graph",
         "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "orchy.openTerminal",
+        "title": "Orchy: Open Agent Terminal",
+        "icon": "$(terminal)"
       }
     ],
     "menus": {
@@ -180,6 +185,11 @@
           "command": "orchy.openTranscript",
           "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
           "group": "1_act@2"
+        },
+        {
+          "command": "orchy.openTerminal",
+          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
+          "group": "1_act@1"
         }
       ]
     },
