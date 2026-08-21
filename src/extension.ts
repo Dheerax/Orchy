@@ -100,6 +100,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return choice?.label;
   };
 
+  /**
+   * Session id from however a command was invoked.
+   *
+   * The command palette passes nothing, `TreeItem.command` passes the id as a
+   * string, and a context menu or inline button passes the tree *element*. Left
+   * unnormalised, the element sails through `id ?? pick()` as a truthy value and
+   * every lookup quietly misses.
+   */
+  const idOf = (arg: unknown): string | undefined => {
+    if (typeof arg === 'string') {
+      return arg;
+    }
+    if (arg && typeof arg === 'object' && typeof (arg as Session).id === 'string') {
+      return (arg as Session).id;
+    }
+    return undefined;
+  };
+
   const fail = (err: unknown): void => {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`ERROR ${message}`);
@@ -109,7 +127,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('orchy.showGraph', () => GraphPanel.show(registry)),
 
-    vscode.commands.registerCommand('orchy.focusSession', (id?: string) => {
+    vscode.commands.registerCommand('orchy.focusSession', (arg?: unknown) => {
+      const id = idOf(arg);
       if (!id) {
         return;
       }
@@ -165,8 +184,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       );
     }),
 
-    vscode.commands.registerCommand('orchy.purge', async (id?: string) => {
-      const target = id ?? (await pick('Remove which session from the list?'));
+    vscode.commands.registerCommand('orchy.purge', async (arg?: unknown) => {
+      const target = idOf(arg) ?? (await pick('Remove which session from the list?'));
       if (!target) {
         return;
       }
@@ -226,8 +245,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    vscode.commands.registerCommand('orchy.verify', async (id?: string) => {
-      const target = id ?? (await pick('Verify which session?'));
+    vscode.commands.registerCommand('orchy.verify', async (arg?: unknown) => {
+      const target = idOf(arg) ?? (await pick('Verify which session?'));
       if (!target) {
         return;
       }
@@ -249,8 +268,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    vscode.commands.registerCommand('orchy.kill', async (id?: string) => {
-      const target = id ?? (await pick('Kill which session?'));
+    vscode.commands.registerCommand('orchy.kill', async (arg?: unknown) => {
+      const target = idOf(arg) ?? (await pick('Kill which session?'));
       if (!target) {
         return;
       }
@@ -279,8 +298,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    vscode.commands.registerCommand('orchy.archive', async (id?: string) => {
-      const target = id ?? (await pick('Archive which session?'));
+    vscode.commands.registerCommand('orchy.archive', async (arg?: unknown) => {
+      const target = idOf(arg) ?? (await pick('Archive which session?'));
       if (!target) {
         return;
       }
@@ -312,8 +331,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    vscode.commands.registerCommand('orchy.merge', async (id?: string) => {
-      const target = id ?? (await pick('Merge which session?'));
+    vscode.commands.registerCommand('orchy.merge', async (arg?: unknown) => {
+      const target = idOf(arg) ?? (await pick('Merge which session?'));
       if (!target) {
         return;
       }

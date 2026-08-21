@@ -92,6 +92,30 @@ check(
   reg.all().sort((a, b) => a.id.localeCompare(b.id))
 );
 
+console.log('\npurge removes a session for good');
+
+reg.record({ type: 'purged', session: 'docs-1' });
+check('purged session is gone', reg.get('docs-1'), undefined);
+check('and drops out of the list', reg.all().length, 1);
+check('surviving session is untouched', reg.get('ui-1')?.status, 'complete');
+
+const afterPurge = new SessionRegistry(new EventLog(dir));
+check('purge survives a replay', afterPurge.get('docs-1'), undefined);
+check('replayed count matches', afterPurge.all().length, 1);
+
+console.log('\nreconcile for a fresh window');
+
+reg.record({ type: 'spawned', session: 'api-1', name: 'API', role: 'api', task: 'x',
+  backend: { type: 'opencode', handle: 'oc-x' }, deliverables: [] });
+reg.record({ type: 'surface', session: 'api-1', gridSlot: 0, visible: true });
+reg.record({ type: 'status', session: 'api-1', status: 'running' });
+check('session claims a slot while live', reg.visible().length, 1);
+
+reg.reconcileForFreshWindow();
+check('a new window frees every slot', reg.visible().length, 0);
+check('and stops trusting "running"', reg.get('api-1')?.status, 'detached');
+check('finished sessions are left alone', reg.get('ui-1')?.status, 'complete');
+
 console.log('\ncorrupt log tolerance');
 
 fs.appendFileSync(path.join(dir, 'events.jsonl'), '{"broken": tru\n', 'utf8');
