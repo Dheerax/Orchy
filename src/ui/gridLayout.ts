@@ -11,19 +11,41 @@ const MAX_COLUMNS = 4;
 const MAX_ROWS = 3;
 
 /**
- * Grid shape for `n` visible sessions: every row the same width.
+ * Panes per row, for `n` visible sessions.
  *
- * Uniformity is not cosmetic. VS Code mishandles setEditorLayout when rows have
- * unequal lengths (microsoft/vscode#84425), and the failure mode is brutal — the
- * call throws after the old panes are already gone, so the grid empties and
- * nothing says why. Three agents therefore occupy a 2x2 with one cell left
- * empty, rather than a 2-then-1 that risks taking the whole grid down.
- *
- *   1 → 1x1    4 → 2x2    7 → 3x3    10 → 3x4
- *   2 → 1x2    5 → 2x3    8 → 3x3    11 → 3x4
- *   3 → 2x2    6 → 2x3    9 → 3x3    12 → 3x4
+ * Written out rather than derived: the shape people actually want is not a
+ * formula. Seven reads best as 3/3/1 while ten reads best as 4/3/3, and no
+ * single rule produces both.
  */
+const ROW_PLANS: readonly (readonly number[])[] = [
+  [], // 0
+  [1],
+  [2],
+  [2, 1],
+  [2, 2],
+  [3, 2],
+  [3, 3],
+  [3, 3, 1],
+  [3, 3, 2],
+  [3, 3, 3],
+  [4, 3, 3],
+  [4, 4, 3],
+  [4, 4, 4],
+];
+
 export function planGrid(n: number): number[] {
+  const count = Math.max(0, Math.min(n, MAX_VISIBLE));
+  return [...ROW_PLANS[count]];
+}
+
+/**
+ * A same-width fallback for `n` panes.
+ *
+ * VS Code has been known to reject layouts whose rows differ in length
+ * (microsoft/vscode#84425). When the preferred plan is refused we retry with
+ * this, which is less pleasing but always accepted.
+ */
+export function uniformGrid(n: number): number[] {
   const count = Math.max(0, Math.min(n, MAX_VISIBLE));
   if (count === 0) {
     return [];
@@ -41,14 +63,15 @@ export interface EditorGroupLayout {
 /**
  * Translate a row plan into the argument `vscode.setEditorLayout` expects.
  *
- * Orientation 1 is vertical, so the top level stacks rows; nested groups are
- * laid out orthogonal to their parent, giving each row its columns. Sizes must
- * sum to 1 within each level or VS Code ignores them.
+ * Orientation 0 stacks the top-level groups as rows; nested groups are laid out
+ * orthogonal to their parent, giving each row its columns. Orientation 1 does
+ * the opposite and produces a single strip of side-by-side panes. Sizes must sum
+ * to 1 within each level or VS Code ignores them.
  */
 export function toEditorLayout(plan: number[]): EditorGroupLayout {
   const rowSize = plan.length > 0 ? 1 / plan.length : 1;
   return {
-    orientation: 1,
+    orientation: 0,
     groups: plan.map((columns) => ({
       size: rowSize,
       groups: Array.from({ length: columns }, () => ({ size: 1 / columns })),

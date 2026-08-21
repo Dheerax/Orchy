@@ -5,6 +5,7 @@ import { Session } from '../core/types';
 import { TranscriptPane } from './transcriptPane';
 import {
   columnForIndex,
+  uniformGrid,
   MAX_VISIBLE,
   pageCount,
   pageSlice,
@@ -53,6 +54,18 @@ export class GridManager implements vscode.Disposable {
     );
   }
 
+  /**
+   * 'dashboard' keeps the editor yours: agents live in the topology panel and
+   * you open the ones you want to watch. 'grid' tiles every visible agent at
+   * once, which is a great demo and a poor place to write code.
+   */
+  private get mode(): 'dashboard' | 'grid' {
+    return vscode.workspace.getConfiguration('orchy').get<'dashboard' | 'grid'>(
+      'paneMode',
+      'dashboard'
+    );
+  }
+
   /** Whether panes run the backend's own TUI instead of Orchy's transcript view. */
   private get useBackendTui(): boolean {
     return vscode.workspace.getConfiguration('orchy').get<boolean>('useBackendTui', false);
@@ -87,6 +100,11 @@ export class GridManager implements vscode.Disposable {
     this.handles.set(session.id, handle);
     if (!this.order.includes(session.id)) {
       this.order.push(session.id);
+    }
+    if (this.mode === 'dashboard') {
+      // Registered, not rendered. The topology panel is the surface; panes open
+      // on request so the editor stays available for actual work.
+      return true;
     }
     // Turn to the page the new agent landed on: spawning should always show you
     // the thing you just spawned.
@@ -139,16 +157,27 @@ export class GridManager implements vscode.Disposable {
         return;
       }
 
+      let applied = plan;
       try {
         await vscode.commands.executeCommand('vscode.setEditorLayout', toEditorLayout(plan));
       } catch (err) {
-        // Keep going: terminals still open, just in whatever layout exists.
-        // Silently aborting here would tear down every pane and show nothing.
+        // VS Code has rejected uneven rows before (microsoft/vscode#84425).
+        // Retry with equal-width rows rather than leaving the grid torn down.
         this.log(
-          `layout for ${ids.length} agent(s) rejected: ${
+          `layout ${JSON.stringify(plan)} rejected (${
             err instanceof Error ? err.message : String(err)
-          }`
+          }); retrying uniform`
         );
+        applied = uniformGrid(ids.length);
+        try {
+          await vscode.commands.executeCommand('vscode.setEditorLayout', toEditorLayout(applied));
+        } catch (fallbackErr) {
+          this.log(
+            `uniform layout also rejected: ${
+              fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+            }`
+          );
+        }
       }
 
       ids.forEach((id, index) => {
@@ -157,37 +186,14 @@ export class GridManager implements vscode.Disposable {
         if (!session || !handle) {
           return;
         }
-        const column = columnForIndex(plan, index);
-        const common = {
-          name: `${session.id} · ${session.role}`,
-          location: { viewColumn: column as vscode.ViewColumn, preserveFocus: true },
-          iconPath: new vscode.ThemeIcon('robot'),
-          color: new vscode.ThemeColor(STATUS_COLORS[session.status] ?? 'terminal.ansiBlue'),
-        };
-
-        let options: vscode.TerminalOptions | vscode.ExtensionTerminalOptions;
-        if (this.useBackendTui) {
-          const attach = this.backend.attachCommand(handle);
-          if (!attach) {
-            return;
-          }
-          this.log(`[${id}] column ${column}: ${attach.command} ${attach.args.join(' ')}`);
-          options = {
-            ...common,
-            cwd: session.worktree?.path,
-            shellPath: attach.command,
-            shellArgs: attach.args,
-            isTransient: true,
-            // shellPath bypasses the user's shell, so no profile runs. A TUI
-            // that cannot identify the terminal may refuse to draw.
-            env: { TERM: 'xterm-256color' },
-          };
-        } else {
-          this.log(`[${id}] column ${column}: transcript pane`);
-          options = { ...common, pty: new TranscriptPane(this.backend, handle, id) };
+        const terminal = this.createPane(
+          session,
+          handle,
+          columnForIndex(applied, index) as vscode.ViewColumn
+        );
+        if (!terminal) {
+          return;
         }
-
-        const terminal = vscode.window.createTerminal(options);
         // Creating a terminal does not surface it; without this it can sit as a
         // background tab, indistinguishable from never having opened.
         terminal.show(true);
@@ -209,6 +215,72 @@ export class GridManager implements vscode.Disposable {
       }
     } finally {
       this.rebuilding = false;
+    }
+  }
+
+  /** Build a pane for one session in the given editor column. */
+  private createPane(
+    session: Session,
+    handle: BackendHandle,
+    column: vscode.ViewColumn
+  ): vscode.Terminal | undefined {
+    const common = {
+      name: `${session.id} · ${session.role}`,
+      location: { viewColumn: column, preserveFocus: true },
+      iconPath: new vscode.ThemeIcon('robot'),
+      color: new vscode.ThemeColor(STATUS_COLORS[session.status] ?? 'terminal.ansiBlue'),
+    };
+
+    if (this.useBackendTui) {
+      const attach = this.backend.attachCommand(handle);
+      if (!attach) {
+        return undefined;
+      }
+      this.log(`[${session.id}] column ${column}: ${attach.command} ${attach.args.join(' ')}`);
+      return vscode.window.createTerminal({
+        ...common,
+        cwd: session.worktree?.path,
+        shellPath: attach.command,
+        shellArgs: attach.args,
+        isTransient: true,
+        // shellPath bypasses the user's shell, so no profile runs. A TUI that
+        // cannot identify the terminal may refuse to draw.
+        env: { TERM: 'xterm-256color' },
+      });
+    }
+
+    this.log(`[${session.id}] column ${column}: transcript pane`);
+    return vscode.window.createTerminal({
+      ...common,
+      pty: new TranscriptPane(this.backend, handle, session.id),
+    });
+  }
+
+  /**
+   * Open one agent's pane without rebuilding the grid.
+   * The dashboard's drill-in: watch this agent, keep everything else as it was.
+   */
+  openSingle(sessionId: string): void {
+    const existing = this.terminals.get(sessionId);
+    if (existing) {
+      existing.show(false);
+      return;
+    }
+    const session = this.registry.get(sessionId);
+    const handle = this.handles.get(sessionId);
+    if (!session || !handle) {
+      return;
+    }
+    const terminal = this.createPane(session, handle, vscode.ViewColumn.Beside);
+    if (terminal) {
+      this.terminals.set(sessionId, terminal);
+      terminal.show(false);
+      this.registry.record({
+        type: 'surface',
+        session: sessionId,
+        terminalId: sessionId,
+        visible: true,
+      });
     }
   }
 
@@ -234,6 +306,9 @@ export class GridManager implements vscode.Disposable {
     }
     if (!this.handles.has(session.id)) {
       this.open(session, handle);
+    }
+    if (this.mode === 'dashboard') {
+      this.openSingle(session.id);
       return;
     }
     this.reveal(session.id);

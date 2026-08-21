@@ -88,6 +88,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (handle) {
       grid.open(session, handle);
     }
+    if (config.get<string>('paneMode', 'dashboard') === 'dashboard') {
+      // In dashboard mode nothing else would appear on screen, so surface the
+      // panel that is meant to be the hub.
+      GraphPanel.show(registry, worktrees);
+    }
     GraphPanel.refreshIfOpen();
   });
 
@@ -158,6 +163,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('orchy.showGraph', () => GraphPanel.show(registry, worktrees)),
+
+    vscode.commands.registerCommand('orchy.tileAll', async () => {
+      await vscode.workspace
+        .getConfiguration('orchy')
+        .update('paneMode', 'grid', vscode.ConfigurationTarget.Workspace);
+      for (const session of registry.all()) {
+        const handle = orchestrator.handleOf(session.id);
+        if (handle && !['archived', 'complete', 'failed'].includes(session.status)) {
+          grid.open(session, handle);
+        }
+      }
+    }),
 
     vscode.commands.registerCommand('orchy.nextPage', () => {
       grid.nextPage();

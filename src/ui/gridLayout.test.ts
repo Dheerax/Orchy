@@ -1,6 +1,7 @@
 /** Run with:  node out/ui/gridLayout.test.js */
 import {
   columnForIndex,
+  uniformGrid,
   MAX_VISIBLE,
   pageCount,
   pageSlice,
@@ -28,33 +29,34 @@ console.log('\ngrid plan');
 check('none', planGrid(0), []);
 check('one fills the pane', planGrid(1), [1]);
 check('two sit side by side', planGrid(2), [2]);
-check('three take a 2x2 with one cell spare', planGrid(3), [2, 2]);
+check('three go two over one', planGrid(3), [2, 1]);
 check('four square up', planGrid(4), [2, 2]);
-check('five', planGrid(5), [3, 3]);
+check('five is three over two', planGrid(5), [3, 2]);
 check('six', planGrid(6), [3, 3]);
-check('seven', planGrid(7), [3, 3, 3]);
-check('eight', planGrid(8), [3, 3, 3]);
+check('seven is 3/3/1', planGrid(7), [3, 3, 1]);
+check('eight is 3/3/2', planGrid(8), [3, 3, 2]);
 check('nine', planGrid(9), [3, 3, 3]);
-check('ten', planGrid(10), [4, 4, 4]);
-check('eleven', planGrid(11), [4, 4, 4]);
+check('ten is 4/3/3', planGrid(10), [4, 3, 3]);
+check('eleven is 4/4/3', planGrid(11), [4, 4, 3]);
 check('twelve fills three rows of four', planGrid(12), [4, 4, 4]);
 
-console.log('\nevery row is the same width');
+console.log('\nplans seat exactly the agents they are given');
 
 for (let n = 1; n <= 12; n++) {
-  const plan = planGrid(n);
+  const total = planGrid(n).reduce((a, b) => a + b, 0);
   checks++;
-  if (new Set(plan).size !== 1) {
+  if (total !== n) {
     failures++;
-    console.log(`  FAIL n=${n} produced unequal rows ${JSON.stringify(plan)}`);
+    console.log(`  FAIL n=${n} planned ${total} panes`);
   }
 }
-check('rows stay uniform for every count (vscode#84425)', true, true);
-check(
-  'a grid always has room for the agents it holds',
-  [1, 3, 5, 7, 8, 10, 11].every((n) => planGrid(n).reduce((a, b) => a + b, 0) >= n),
-  true
-);
+check('no plan leaves an empty cell', true, true);
+
+console.log('\nuniform fallback (for vscode#84425)');
+
+check('pads three into a 2x2', uniformGrid(3), [2, 2]);
+check('rows are all equal', new Set(uniformGrid(7)).size, 1);
+check('still seats everyone', uniformGrid(7).reduce((a, b) => a + b, 0) >= 7, true);
 
 console.log('\nplans never exceed the ceiling');
 
@@ -74,10 +76,10 @@ check('past the ceiling it clamps to twelve', planGrid(30), [4, 4, 4]);
 console.log('\neditor layout argument');
 
 const layout = toEditorLayout(planGrid(3));
-check('rows stack vertically', layout.orientation, 1);
+check('rows stack, rather than sitting side by side', layout.orientation, 0);
 check('two rows', layout.groups.length, 2);
 check('first row has two columns', layout.groups[0].groups?.length, 2);
-check('so does the second', layout.groups[1].groups?.length, 2);
+check('second row has one', layout.groups[1].groups?.length, 1);
 check(
   'row sizes sum to one',
   layout.groups.reduce((sum, g) => sum + (g.size ?? 0), 0),
