@@ -292,6 +292,33 @@ export class OpenCodeBackend implements AgentBackend {
     return { tokensUsed, costEstimate };
   }
 
+  /**
+   * Ask the session whether it is still working.
+   *
+   * A message carries `time.completed` once its turn has finished, so the newest
+   * message having one means nothing is in flight. The session object's own cost
+   * and token fields stay at zero regardless of work done, which is why usage is
+   * summed from the messages instead.
+   */
+  async pollState(handle: BackendHandle): Promise<{
+    state: 'working' | 'idle';
+    tokensUsed: number;
+    costEstimate: number;
+  }> {
+    const messages = await this.client.messages(handle.id);
+    let tokensUsed = 0;
+    let costEstimate = 0;
+    for (const message of messages) {
+      tokensUsed += (message.tokens?.input ?? 0) + (message.tokens?.output ?? 0);
+      costEstimate += message.cost ?? 0;
+    }
+
+    // Newest first. No messages yet means the opening prompt is still landing.
+    const newest = messages[0] as { time?: { completed?: number } } | undefined;
+    const state = newest?.time?.completed ? 'idle' : 'working';
+    return { state, tokensUsed, costEstimate };
+  }
+
   dispose(): void {
     this.client.close();
   }

@@ -94,4 +94,19 @@ export interface AgentBackend {
 
   /** Tokens and cost so far, summed from the transcript. */
   usage?(handle: BackendHandle): Promise<{ tokensUsed: number; costEstimate: number }>;
+
+  /**
+   * Whether the session is still working, asked directly rather than inferred
+   * from events.
+   *
+   * OpenCode's stream reports tool calls but never a terminal event we can
+   * recognise, so a session that had finished sat at `running` forever and its
+   * dependents never released. Deriving the answer ourselves is cheap — local
+   * HTTP, no tokens — and does not depend on guessing event names.
+   */
+  pollState?(handle: BackendHandle): Promise<{
+    state: 'working' | 'idle';
+    tokensUsed: number;
+    costEstimate: number;
+  }>;
 }

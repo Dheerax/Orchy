@@ -59,6 +59,8 @@ export class Orchestrator extends EventEmitter {
   private handles = new Map<string, BackendHandle>();
   private unsubscribes = new Map<string, () => void>();
   private counters = new Map<string, number>();
+  private poller: NodeJS.Timeout | undefined;
+  private polling = false;
   /** Sessions held until their dependencies complete. */
   private queued = new Map<string, { request: SpawnRequest }>();
 
@@ -73,6 +75,75 @@ export class Orchestrator extends EventEmitter {
   ) {
     super();
     this.rehydrateCounters();
+    this.startWatching();
+  }
+
+  /**
+   * Watch running sessions for completion.
+   *
+   * The backend's event stream reports tool calls but never a terminal event we
+   * can recognise, so a finished session sat at `running` indefinitely and its
+   * dependents never released. Asking directly is cheap — local HTTP, no tokens,
+   * no orchestrator turns — and it means the pipeline advances on its own rather
+   * than only when somebody thinks to look.
+   */
+  private startWatching(intervalMs = 4000): void {
+    this.poller = setInterval(() => void this.sweep(), intervalMs);
+  }
+
+  private async sweep(): Promise<void> {
+    if (this.polling || !this.backend.pollState) {
+      return;
+    }
+    this.polling = true;
+    try {
+      for (const session of this.registry.all()) {
+        if (session.status !== 'running' && session.status !== 'spawning') {
+          continue;
+        }
+        const handle = this.handles.get(session.id);
+        if (!handle) {
+          continue;
+        }
+        let observed;
+        try {
+          observed = await this.backend.pollState(handle);
+        } catch {
+          continue; // Transient; the next sweep will try again.
+        }
+
+        if (
+          observed.tokensUsed !== session.budget.tokensUsed ||
+          observed.costEstimate !== session.budget.costEstimate
+        ) {
+          this.registry.record({
+            type: 'budget',
+            session: session.id,
+            tokensUsed: observed.tokensUsed,
+            costEstimate: observed.costEstimate,
+          });
+          this.enforceBudget(session.id);
+        }
+
+        if (observed.state === 'idle') {
+          this.registry.record({
+            type: 'status',
+            session: session.id,
+            status: 'idle_unverified',
+          });
+          await this.verify(session.id);
+        }
+      }
+    } finally {
+      this.polling = false;
+    }
+  }
+
+  stopWatching(): void {
+    if (this.poller) {
+      clearInterval(this.poller);
+      this.poller = undefined;
+    }
   }
 
   /** Ids must not collide with sessions replayed from a previous window. */
@@ -747,6 +818,7 @@ export class Orchestrator extends EventEmitter {
   }
 
   disposeAll(): void {
+    this.stopWatching();
     for (const unsubscribe of this.unsubscribes.values()) {
       unsubscribe();
     }

@@ -63,7 +63,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const version = String(context.extension.packageJSON.version ?? 'unknown');
   const daemon = new DaemonServer(registry, orchestrator, orchyDir, root, version);
 
-  context.subscriptions.push(tree.register(), { dispose: () => daemon.dispose() });
+  context.subscriptions.push(tree.register(), {
+    dispose: () => {
+      orchestrator.disposeAll();
+      daemon.dispose();
+    },
+  });
 
   context.subscriptions.push(output);
 
