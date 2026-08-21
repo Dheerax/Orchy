@@ -66,6 +66,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   };
 
+  // Bound before anything else touches the panel: this also claims the webview
+  // tab VS Code restores when the window reopens, which would otherwise sit
+  // there empty forever.
+  context.subscriptions.push(
+    WorkspacePanel.bind({
+      registry,
+      worktrees,
+      backend,
+      handleOf: (id) => orchestrator.handleOf(id),
+      onPlanDecision: decidePlan,
+    })
+  );
+
   const transcripts = new TranscriptDocumentProvider(registry, backend, (id) =>
     orchestrator.handleOf(id)
   );
@@ -113,15 +126,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // awaiting a decision comes back with the window.
   const restored = planner.pending()[0];
   if (restored) {
-    WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id), decidePlan);
+    WorkspacePanel.show();
     WorkspacePanel.showPlan(restored);
     output.appendLine(`Restored plan ${restored.id}, still awaiting your decision.`);
   }
 
   daemon.onPlanProposed = (plan) => {
-    WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id), decidePlan);
     WorkspacePanel.showPlan(plan);
   };
+  daemon.onDiagnostics = () => WorkspacePanel.diagnostics();
 
   try {
     const port = await daemon.start();
@@ -136,7 +149,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // A spawn should put the workspace on screen, since it is the only surface
   // where the new agent will appear.
   orchestrator.on('spawned', () => {
-    WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id), decidePlan);
+    WorkspacePanel.show();
   });
 
   const pick = async (placeHolder: string): Promise<string | undefined> => {
@@ -247,7 +260,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
 
     vscode.commands.registerCommand('orchy.showGraph', () =>
-      WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id), decidePlan)
+      WorkspacePanel.show()
     ),
 
     vscode.commands.registerCommand('orchy.focusSession', (arg?: unknown) => {
@@ -255,7 +268,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!id) {
         return;
       }
-      WorkspacePanel.show(registry, worktrees, backend, (i) => orchestrator.handleOf(i), decidePlan);
+      WorkspacePanel.show();
       WorkspacePanel.refreshIfOpen();
     }),
 
@@ -490,7 +503,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         groups: [{ size: 0.5 }, { size: 0.5 }],
       });
       await vscode.commands.executeCommand('workbench.view.extension.orchy');
-      WorkspacePanel.show(registry, worktrees, backend, (id) => orchestrator.handleOf(id), decidePlan);
+      WorkspacePanel.show();
       void vscode.window.showInformationMessage(
         'Orchy: layout ready. Agent terminals fill the editor columns; the topology panel is beside them.'
       );

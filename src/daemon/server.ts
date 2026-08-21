@@ -47,6 +47,9 @@ export class DaemonServer {
   /** Set by the extension so a proposed plan can surface in the UI immediately. */
   onPlanProposed: ((plan: import('../core/types').Plan) => void) | undefined;
 
+  /** Set by the extension so "the panel is blank" can be answered with facts. */
+  onDiagnostics: (() => Record<string, unknown>) | undefined;
+
   async start(): Promise<number> {
     this.server = http.createServer((req, res) => void this.handle(req, res));
     await new Promise<void>((resolve, reject) => {
@@ -229,6 +232,15 @@ export class DaemonServer {
         }
         return { ...this.planStatus(plan.id), warnings: plan.warnings };
       }
+
+      case '/diag':
+        return {
+          version: this.version,
+          workspace: this.workspaceRoot,
+          sessions: this.registry.all().length,
+          pending_plans: this.orchestrator.planner.pending().map((p) => p.id),
+          panel: this.onDiagnostics?.() ?? { open: false, note: 'No panel surface registered.' },
+        };
 
       case '/plan_status':
         return this.planStatus(String(body.plan_id ?? ''));

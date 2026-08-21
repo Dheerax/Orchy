@@ -35,8 +35,21 @@ interface PanelSession {
  * In exchange the layout is ours, it is one stable tab, and the editor beside it
  * stays free for actual work.
  */
+/** Everything the panel needs to build itself, captured once at activation. */
+export interface PanelDeps {
+  registry: SessionRegistry;
+  worktrees: WorktreeManager;
+  backend: AgentBackend;
+  handleOf: (id: string) => BackendHandle | undefined;
+  onPlanDecision?: (id: string, decision: 'approved' | 'rejected', feedback?: string) => void;
+}
+
 export class WorkspacePanel {
   private static current: WorkspacePanel | undefined;
+  private static deps: PanelDeps | undefined;
+  private ready = 0;
+  private pushes = 0;
+  private lastPush: string | undefined;
   private disposables: vscode.Disposable[] = [];
   private handles = new Map<string, BackendHandle>();
   private focused: string | undefined;
@@ -44,18 +57,29 @@ export class WorkspacePanel {
   private plan: Plan | undefined;
   private pending: NodeJS.Timeout | undefined;
 
+  private readonly registry: SessionRegistry;
+  private readonly worktrees: WorktreeManager;
+  private readonly backend: AgentBackend;
+  private readonly handleOf: (id: string) => BackendHandle | undefined;
+  private readonly onPlanDecision?: (
+    id: string,
+    decision: 'approved' | 'rejected',
+    feedback?: string
+  ) => void;
+
   private constructor(
     private readonly panel: vscode.WebviewPanel,
-    private readonly registry: SessionRegistry,
-    private readonly worktrees: WorktreeManager,
-    private readonly backend: AgentBackend,
-    private readonly handleOf: (id: string) => BackendHandle | undefined,
-    private readonly onPlanDecision?: (
-      id: string,
-      decision: 'approved' | 'rejected',
-      feedback?: string
-    ) => void
+    deps: PanelDeps
   ) {
+    this.registry = deps.registry;
+    this.worktrees = deps.worktrees;
+    this.backend = deps.backend;
+    this.handleOf = deps.handleOf;
+    this.onPlanDecision = deps.onPlanDecision;
+
+    // A restored panel arrives with whatever options it was created with, but
+    // its content is gone: it has to be rebuilt from scratch either way.
+    this.panel.webview.options = { enableScripts: true };
     this.panel.webview.html = this.html();
 
     this.panel.webview.onDidReceiveMessage(
@@ -93,19 +117,35 @@ export class WorkspacePanel {
     );
   }
 
-  static show(
-    registry: SessionRegistry,
-    worktrees: WorktreeManager,
-    backend: AgentBackend,
-    handleOf: (id: string) => BackendHandle | undefined,
-    onPlanDecision?: (
-      id: string,
-      decision: 'approved' | 'rejected',
-      feedback?: string
-    ) => void
-  ): void {
+  /**
+   * Hand the panel what it needs and let VS Code give back the tab it restored.
+   *
+   * VS Code reopens webview tabs when a window reopens, before the extension
+   * has activated. An extension that does not claim them leaves the user
+   * looking at a tab titled Orchy containing nothing at all — and no way to
+   * tell that from a pipeline with nothing in it.
+   */
+  static bind(deps: PanelDeps): vscode.Disposable {
+    WorkspacePanel.deps = deps;
+    return vscode.window.registerWebviewPanelSerializer('orchy.workspace', {
+      deserializeWebviewPanel(panel: vscode.WebviewPanel): Promise<void> {
+        if (WorkspacePanel.current) {
+          panel.dispose(); // A second Orchy tab is never what was wanted.
+        } else {
+          WorkspacePanel.current = new WorkspacePanel(panel, deps);
+        }
+        return Promise.resolve();
+      },
+    });
+  }
+
+  static show(): void {
     if (WorkspacePanel.current) {
       WorkspacePanel.current.panel.reveal(undefined, true);
+      void WorkspacePanel.current.push();
+      return;
+    }
+    if (!WorkspacePanel.deps) {
       return;
     }
     const panel = vscode.window.createWebviewPanel(
@@ -119,14 +159,21 @@ export class WorkspacePanel {
       // It also keeps scroll position, focus and the diagram's pan/zoom.
       { enableScripts: true, retainContextWhenHidden: true }
     );
-    WorkspacePanel.current = new WorkspacePanel(
-      panel,
-      registry,
-      worktrees,
-      backend,
-      handleOf,
-      onPlanDecision
-    );
+    WorkspacePanel.current = new WorkspacePanel(panel, WorkspacePanel.deps);
+  }
+
+  /** What the panel is doing, for when it is doing nothing. */
+  static diagnostics(): Record<string, unknown> {
+    const panel = WorkspacePanel.current;
+    return {
+      open: Boolean(panel),
+      bound: Boolean(WorkspacePanel.deps),
+      visible: panel?.panel.visible ?? false,
+      ready_messages: panel?.ready ?? 0,
+      snapshots_pushed: panel?.pushes ?? 0,
+      last_push: panel?.lastPush,
+      plan_on_screen: panel?.plan?.id,
+    };
   }
 
   static refreshIfOpen(): void {
@@ -135,6 +182,9 @@ export class WorkspacePanel {
 
   /** Put a proposed plan in front of the user before anything runs. */
   static showPlan(plan: Plan): void {
+    // Opening the panel is the point of this call. Returning quietly because no
+    // panel happened to be open is how a plan gets proposed to nobody.
+    WorkspacePanel.show();
     if (!WorkspacePanel.current) {
       return;
     }
@@ -169,6 +219,7 @@ export class WorkspacePanel {
   }): Promise<void> {
     switch (msg.type) {
       case 'ready':
+        this.ready++;
         await this.push();
         break;
       case 'focus':
@@ -302,6 +353,8 @@ export class WorkspacePanel {
       });
     }
 
+    this.pushes++;
+    this.lastPush = new Date().toISOString();
     void this.panel.webview.postMessage({
       type: 'snapshot',
       data: {
