@@ -4,6 +4,7 @@ import { ContractChecker } from './contractChecker';
 import { DeliverableVerifier } from './deliverableVerifier';
 import { ModelPolicy, looksLikeModelFailure } from './modelPolicy';
 import { Planner } from './planner';
+import { ProjectConfig, loadProjectConfig, rulesBlock } from './projectConfig';
 import { SessionRegistry } from './sessionRegistry';
 import {
   AgentContract,
@@ -62,6 +63,27 @@ export class Orchestrator extends EventEmitter {
   private handles = new Map<string, BackendHandle>();
   /** What the backend can currently run. Empty until the catalogue is fetched. */
   readonly models = new ModelPolicy();
+
+  /**
+   * This repository's own rules, re-read on every use.
+   *
+   * Deliberately not cached: the file is small, it is edited by hand while the
+   * window is open, and a rule that only takes effect after a reload is a rule
+   * people will believe is broken.
+   */
+  project(): ProjectConfig {
+    return loadProjectConfig(this.worktrees.root);
+  }
+
+  /**
+   * The branch worktrees are cut from.
+   *
+   * The project's file outranks the VS Code setting: it is checked in, so it is
+   * a fact about the repository rather than about whoever's machine this is.
+   */
+  private get baseBranch(): string {
+    return this.project().baseBranch ?? this.config.baseBranch;
+  }
   private unsubscribes = new Map<string, () => void>();
   private counters = new Map<string, number>();
   private poller: NodeJS.Timeout | undefined;
@@ -202,7 +224,7 @@ export class Orchestrator extends EventEmitter {
 
     const worktree = req.shareWorkspace
       ? undefined
-      : this.worktrees.create(id, this.config.baseBranch);
+      : this.worktrees.create(id, this.baseBranch);
 
     const dependsOn = (req.dependsOn ?? []).filter((d) => this.registry.get(d));
 
@@ -215,7 +237,9 @@ export class Orchestrator extends EventEmitter {
       backend: { type: this.backend.id, handle: '', model: req.model },
       worktree,
       deliverables,
-      contract: { forbiddenCommands: [...DEFAULT_FORBIDDEN_COMMANDS] },
+      contract: {
+        forbiddenCommands: [...DEFAULT_FORBIDDEN_COMMANDS, ...this.project().forbid],
+      },
       dependsOn,
       agreement: req.agreement ?? { provides: [], needs: [] },
       planId: req.planId,
@@ -538,7 +562,14 @@ export class Orchestrator extends EventEmitter {
     worktree?: string,
     agreement?: AgentContract
   ): string {
-    const lines = [task, ''];
+    const project = this.project();
+    const lines = [task + rulesBlock(project), ''];
+    if (project.verify) {
+      lines.push(
+        `Before you claim to be done, \`${project.verify}\` must pass. Run it yourself.`,
+        ''
+      );
+    }
     if (worktree) {
       lines.push(
         `You are working in an isolated git worktree at ${worktree}.`,
@@ -628,7 +659,8 @@ export class Orchestrator extends EventEmitter {
     if (!session) {
       return;
     }
-    const cap = sessionCap ?? session.budget.cap ?? this.config.globalBudgetCap;
+    const cap =
+      sessionCap ?? session.budget.cap ?? this.project().budgetCap ?? this.config.globalBudgetCap;
     /*
      * Zero is off.
      *
@@ -958,12 +990,12 @@ export class Orchestrator extends EventEmitter {
           `Verify its deliverables first.`
       );
     }
-    this.worktrees.mergeBack(session.worktree.path, session.worktree.branch, this.config.baseBranch);
+    this.worktrees.mergeBack(session.worktree.path, session.worktree.branch, this.baseBranch);
     this.registry.record({
       type: 'merged',
       session: id,
       branch: session.worktree.branch,
-      into: this.config.baseBranch,
+      into: this.baseBranch,
     });
     this.emit('merged', session);
   }

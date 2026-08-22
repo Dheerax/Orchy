@@ -39,16 +39,26 @@ whether or not you are still connected. Proposing again is the one thing not to
 do: a new plan supersedes the one on their screen, so a proposal loop means they
 can never finish deciding.
 
-## 0b. Start from a known shape
+## 0b. Learn what this project expects
 
-Unsure how to split the work? Call `orchy_templates`. It returns decompositions
-that fit common situations — one agent, a feature crossing layers, independent
-changes, research-then-build, a staged migration — with guidance on when each
-one applies.
+Call `orchy_project` and `orchy_models` before you plan.
 
-They are shapes, not scripts. Adapt the tasks, fill in deliverables and
-contracts, then propose the result. Picking a known shape is more reliable than
-inventing one under time pressure.
+`orchy_project` returns this repository's own rules from its `.orchy.json`: the
+conventions every agent is given, the command their work has to pass, preferred
+models, and the budget. Those rules are already appended to every agent brief,
+so do not repeat them in tasks — but they change what a sensible plan looks
+like. A project that forbids new dependencies is not one to plan a pipeline
+around adopting a framework.
+
+`orchy_models` returns what you can actually run on, with tiers and prices.
+Matching the model to the work is most of what makes a pipeline cheap or
+expensive: mechanical edits behind a settled interface do not need a frontier
+model, and the agent deciding whether the result is correct should not be run on
+the cheapest thing available.
+
+Do not ask the user to choose a pipeline shape. You can see the work; the shape
+follows from it. What you cannot see is the repository's conventions, which is
+exactly what `orchy_project` is for.
 
 ## 0c. Aim for width, not a chain
 

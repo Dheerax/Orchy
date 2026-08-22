@@ -2,7 +2,7 @@
   "name": "orchy",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code — a grid of isolated agents, driven by an orchestrator, with live topology.",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -117,10 +117,6 @@
         "icon": "$(go-to-file)"
       },
       {
-        "command": "orchy.seedTemplates",
-        "title": "Orchy: Write Example Pipeline Templates"
-      },
-      {
         "command": "orchy.showPipeline",
         "title": "Orchy: Open Pipeline Graph",
         "icon": "$(type-hierarchy)"
@@ -133,6 +129,10 @@
       {
         "command": "orchy.checkSetup",
         "title": "Orchy: Check Setup"
+      },
+      {
+        "command": "orchy.createProjectConfig",
+        "title": "Orchy: Create Project Config"
       }
     ],
     "menus": {
@@ -243,7 +243,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node out/core/stateLayer.test.js && node out/core/planner.test.js && node out/core/modelPolicy.test.js && node out/core/doctor.test.js && node out/backends/binaryResolution.test.js && node out/ui/gridLayout.test.js && node out/ui/panelRender.test.js && node out/ui/railGraph.test.js && node out/core/integration.test.js && node mcp/smoke.mjs"
+    "test": "npm run compile && node out/core/stateLayer.test.js && node out/core/planner.test.js && node out/core/modelPolicy.test.js && node out/core/doctor.test.js && node out/core/projectConfig.test.js && node out/backends/binaryResolution.test.js && node out/ui/gridLayout.test.js && node out/ui/panelRender.test.js && node out/ui/railGraph.test.js && node out/core/integration.test.js && node mcp/smoke.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

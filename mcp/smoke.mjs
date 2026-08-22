@@ -84,12 +84,12 @@ check('all tools are listed', names, [
   'orchy_models',
   'orchy_plan',
   'orchy_plan_status',
+  'orchy_project',
   'orchy_relay',
   'orchy_send',
   'orchy_set_model',
   'orchy_spawn',
   'orchy_status',
-  'orchy_templates',
   'orchy_verify',
   'orchy_wait',
 ]);

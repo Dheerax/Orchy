@@ -3,8 +3,8 @@ import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
 import { Orchestrator, SpawnRequest } from '../core/orchestrator';
+import { ProjectConfig, loadProjectConfig } from '../core/projectConfig';
 import { SessionRegistry } from '../core/sessionRegistry';
-import { TemplateLibrary } from '../core/templates';
 import { NEEDS_ATTENTION } from '../core/types';
 
 interface Handshake {
@@ -40,9 +40,13 @@ export class DaemonServer {
     private readonly orchestrator: Orchestrator,
     private readonly orchyDir: string,
     private readonly workspaceRoot: string,
-    private readonly version: string,
-    private readonly templates = new TemplateLibrary(orchyDir)
+    private readonly version: string
   ) {}
+
+  /** This repository's rules, re-read each time so an edit takes effect at once. */
+  private project(): ProjectConfig {
+    return loadProjectConfig(this.workspaceRoot);
+  }
 
   /** Set by the extension so a proposed plan can surface in the UI immediately. */
   onPlanProposed: ((plan: import('../core/types').Plan) => void) | undefined;
@@ -155,25 +159,25 @@ export class DaemonServer {
         return summarize(session);
       }
 
-      case '/templates':
+      case '/project': {
+        const project = this.project();
         return {
-          templates: this.templates.all().map((t) => ({
-            name: t.name,
-            description: t.description,
-            use_when: t.useWhen,
-            built_in: t.builtIn,
-            agents: t.agents.map((a, i) => ({
-              index: i,
-              role: a.role,
-              task: a.task,
-              depends_on: a.dependsOn,
-              owns: a.owns,
-            })),
-          })),
-          note:
-            'These are decompositions, not scripts. Adapt the tasks to the actual request, ' +
-            'fill in deliverables and contracts, then propose the result with orchy_plan.',
+          config_file: project.path ?? null,
+          base_branch: project.baseBranch ?? null,
+          rules: project.rules,
+          verify: project.verify ?? null,
+          models: project.models,
+          budget_cap: project.budgetCap ?? null,
+          forbid: project.forbid,
+          warnings: project.warnings,
+          note: project.path
+            ? 'These are this repository\'s own rules. They are already appended to every ' +
+              'agent brief, so do not repeat them in tasks — but do plan around them: a rule ' +
+              'saying no new dependencies changes what a sensible plan looks like.'
+            : 'This project has no .orchy.json, so there are no house rules beyond what you ' +
+              'can read in the code. Run "Orchy: Create Project Config" in VS Code to add one.',
         };
+      }
 
       case '/plan': {
         const agents = Array.isArray(body.agents) ? body.agents : [];

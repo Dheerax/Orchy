@@ -83,8 +83,8 @@ function surfaceOfPanel(panel: vscode.WebviewPanel): Surface {
 /** Everything the panel needs to build itself, captured once at activation. */
 export interface PanelDeps {
   registry: SessionRegistry;
-  /** The pipeline shapes on offer, so the empty panel can suggest one. */
-  templates: () => { name: string; useWhen: string; agents: number }[];
+  /** This repository's rules, so the empty panel can show what agents will be told. */
+  project: () => { path?: string; rules: string[]; verify?: string; warnings: string[] };
   /** Whether this machine can run anything, cached from the last check. */
   setup: () => { name: string; ok: boolean; detail: string; fix?: string }[];
   worktrees: WorktreeManager;
@@ -124,7 +124,12 @@ export class WorkspacePanel {
   private pending: NodeJS.Timeout | undefined;
 
   private readonly registry: SessionRegistry;
-  private readonly templates: () => { name: string; useWhen: string; agents: number }[];
+  private readonly project: () => {
+    path?: string;
+    rules: string[];
+    verify?: string;
+    warnings: string[];
+  };
   private readonly setup: () => { name: string; ok: boolean; detail: string; fix?: string }[];
   private readonly worktrees: WorktreeManager;
   private readonly backend: AgentBackend;
@@ -140,7 +145,7 @@ export class WorkspacePanel {
     deps: PanelDeps
   ) {
     this.registry = deps.registry;
-    this.templates = deps.templates;
+    this.project = deps.project;
     this.setup = deps.setup;
     this.worktrees = deps.worktrees;
     this.backend = deps.backend;
@@ -412,6 +417,9 @@ export class WorkspacePanel {
         WorkspacePanel.inspected = msg.id;
         await this.push();
         break;
+      case 'openConfig':
+        await vscode.commands.executeCommand('orchy.createProjectConfig');
+        break;
       case 'copy':
         // Through the host rather than the webview: the clipboard API is
         // unavailable in a webview often enough that it cannot be relied on,
@@ -571,7 +579,7 @@ export class WorkspacePanel {
         blocked: this.registry.needingAttention().length,
         archived: this.registry.all().length - live.length,
         plan: WorkspacePanel.activePlan,
-        templates: this.templates(),
+        project: this.project(),
         // Only the failures. A working machine should not be told it is working.
         setup: this.setup().filter((c) => !c.ok),
       },
@@ -862,6 +870,9 @@ export class WorkspacePanel {
            padding: 2px 8px; }
   .scopy:hover { color: var(--running); border-color: var(--running); }
   .swhen { font-size: 11px; margin-top: 3px; line-height: 1.5; }
+  .rules { margin: 5px 0 0; padding-left: 18px; font-size: 11.5px; line-height: 1.6; }
+  .shape code { background: var(--vscode-textCodeBlock-background); padding: 1px 5px;
+                border-radius: 3px; font-family: var(--mono); font-size: 10.5px; }
   .broke { border: 1px solid var(--failed); border-left-width: 3px; border-radius: 8px;
            padding: 8px 11px; background: color-mix(in srgb, var(--failed) 7%, var(--card)); }
   .bname { font-weight: 600; color: var(--fg); font-size: 12.5px; }
@@ -1198,42 +1209,49 @@ export class WorkspacePanel {
    * be pasted straight to an orchestrator rather than describing one.
    */
   function emptyHtml(d) {
-    const shapes = (d.templates || []).map(t =>
-      '<div class="shape">' +
-        '<div class="sname">' + esc(t.name) +
-          '<span class="scount">' + t.agents + ' agent' + (t.agents === 1 ? '' : 's') + '</span>' +
-          '<button class="scopy" data-copy="' + esc(t.name) + '">Copy prompt</button>' +
-        '</div>' +
-        '<div class="swhen">' + esc(t.useWhen) + '</div>' +
-      '</div>').join('');
-
-    // Anything broken comes first. Offering pipeline shapes to someone whose
-    // OpenCode is not installed is an invitation to fail later for a reason
-    // they will not connect to this.
+    // Anything broken comes first. Telling someone whose OpenCode is not
+    // installed how to start a pipeline is an invitation to fail later for a
+    // reason they will not connect to this.
     const broken = (d.setup || []).map(c =>
       '<div class="broke">' +
         '<div class="bname">' + esc(c.name) + '</div>' +
         '<div class="bfix">' + esc(c.fix || c.detail) + '</div>' +
       '</div>').join('');
 
-    return '<div class="empty">' +
-      (broken
-        ? '<div class="shapes">' + broken + '</div>'
-        : '') +
-      '<p>' + (broken ? 'Fix those first. Then describe' : 'Nothing is running. Describe') +
-      ' the work to your orchestrator and it will propose a pipeline for you to ' +
-      'approve \u2014 or start from one of these shapes.</p>' +
-      (shapes ? '<div class="shapes">' + shapes + '</div>' : '') +
-      '</div>';
-  }
+    const p = d.project || { rules: [], warnings: [] };
+    const warnings = (p.warnings || []).map(w =>
+      '<div class="broke"><div class="bfix">' + esc(w) + '</div></div>').join('');
 
-  /** The instruction a user can paste without having to write it themselves. */
-  function promptFor(name) {
-    return 'Use the orchy tools. Read orchy_guide and orchy_models first, then plan ' +
-      'this work as a "' + name + '" pipeline with orchy_plan \u2014 adapt the shape to ' +
-      'the task rather than following it literally, give every agent deliverables and ' +
-      'a provides/needs contract, and match each model to what its agent actually has ' +
-      'to decide.\\n\\nThe work: ';
+    const rules = (p.rules || []).map(r => '<li>' + esc(r) + '</li>').join('');
+    const project = p.path
+      ? '<div class="shape">' +
+          '<div class="sname">This project’s rules' +
+            '<span class="scount">.orchy.json</span>' +
+            '<button class="scopy" data-openconfig="1">Edit</button>' +
+          '</div>' +
+          (rules
+            ? '<ul class="rules">' + rules + '</ul>'
+            : '<div class="swhen">No rules set yet.</div>') +
+          (p.verify
+            ? '<div class="swhen">Every agent must also pass <code>' + esc(p.verify) + '</code></div>'
+            : '') +
+        '</div>'
+      : '<div class="shape">' +
+          '<div class="sname">No project rules' +
+            '<span class="scount">.orchy.json</span>' +
+            '<button class="scopy" data-openconfig="1">Create</button>' +
+          '</div>' +
+          '<div class="swhen">Conventions every agent should be told without you ' +
+          'having to type them each time — the language, the test command, whether new ' +
+          'dependencies are welcome. Committed, so the rest of the team gets them too.</div>' +
+        '</div>';
+
+    return '<div class="empty">' +
+      (broken || warnings ? '<div class="shapes">' + broken + warnings + '</div>' : '') +
+      '<p>' + (broken ? 'Fix those first, then describe' : 'Nothing is running. Describe') +
+      ' the work to your orchestrator — it will propose a pipeline for you to approve.</p>' +
+      '<div class="shapes">' + project + '</div>' +
+      '</div>';
   }
 
   function statusColor(status) {
@@ -1310,9 +1328,8 @@ export class WorkspacePanel {
     }
     const plan = e.target.closest('[data-plan]');
     if (plan) { api.postMessage({ type: plan.dataset.plan }); return; }
-    const copy = e.target.closest('[data-copy]');
-    if (copy) {
-      api.postMessage({ type: 'copy', text: promptFor(copy.dataset.copy) });
+    if (e.target.closest('[data-openconfig]')) {
+      api.postMessage({ type: 'openConfig' });
       return;
     }
     const pick = e.target.closest('[data-inspect]');

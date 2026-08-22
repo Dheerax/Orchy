@@ -93,8 +93,29 @@ A plan appears in the **Orchy** panel at the bottom, next to your terminal: a
 diagram of who depends on whom, what each agent owes, and which model each will
 run on. Approve it and the agents start.
 
-If you would rather not write that instruction yourself, the empty panel lists
-the built-in pipeline shapes with a **Copy prompt** button.
+## Project rules
+
+Run **`Orchy: Create Project Config`** to write a `.orchy.json` at the repository
+root. It is where the things an orchestrator cannot infer live:
+
+```json
+{
+  "rules": [
+    "Plain CommonJS. Do not introduce a build step.",
+    "No new dependencies without saying why in the commit message."
+  ],
+  "verify": "npm test",
+  "models": { "cheap": "opencode/ling-3.0-flash-free" },
+  "baseBranch": "main",
+  "budgetCap": 0
+}
+```
+
+`rules` are appended verbatim to every agent's brief — the prompt being the only
+place they can actually change what an agent does — and `verify` is a command
+every agent must pass on top of its own deliverables. Commit the file: the rest
+of the team gets them too. A malformed one costs you the settings you got wrong
+and nothing else.
 
 ## What you see
 
@@ -143,7 +164,7 @@ retry; a dead server fails the same way forever.
 | Tool | What it does |
 |---|---|
 | `orchy_guide` | How to operate the pipeline. Read this first |
-| `orchy_templates` | Pipeline shapes to start from, and when each fits |
+| `orchy_project` | This repository's rules, from its `.orchy.json` |
 | `orchy_models` | Available models with tier and price |
 | `orchy_plan` / `orchy_plan_status` | Propose a pipeline and await approval |
 | `orchy_spawn` | One agent, in its own worktree |

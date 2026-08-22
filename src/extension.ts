@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { OpenCodeBackend } from './backends/opencodeBackend';
@@ -5,8 +6,8 @@ import { DeliverableVerifier } from './core/deliverableVerifier';
 import { Check, checkSetup, summarise } from './core/doctor';
 import { EventLog } from './core/eventLog';
 import { Orchestrator } from './core/orchestrator';
+import { CONFIG_FILE, exampleConfig, loadProjectConfig } from './core/projectConfig';
 import { Planner } from './core/planner';
-import { TemplateLibrary } from './core/templates';
 import { SessionRegistry } from './core/sessionRegistry';
 import { Session } from './core/types';
 import {
@@ -100,12 +101,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ...WorkspacePanel.bind({
       registry,
       setup: () => setupChecks,
-      templates: () =>
-        new TemplateLibrary(orchyDir).all().map((t) => ({
-          name: t.name,
-          useWhen: t.useWhen,
-          agents: t.agents.length,
-        })),
+      project: () => {
+        const p = loadProjectConfig(root);
+        return { path: p.path, rules: p.rules, verify: p.verify, warnings: p.warnings };
+      },
       worktrees,
       backend,
       handleOf: (id) => orchestrator.handleOf(id),
@@ -299,16 +298,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       GraphPanel.show(registry, worktrees)
     ),
 
-    vscode.commands.registerCommand('orchy.seedTemplates', async () => {
-      const dir = new TemplateLibrary(orchyDir).seed();
-      void vscode.window.showInformationMessage(
-        `Orchy: example templates written to ${dir}. Edit or add .json files there and they ` +
-          `appear alongside the built-in shapes.`
-      );
-      const doc = await vscode.workspace.openTextDocument(
-        vscode.Uri.file(path.join(dir, 'feature.example.json'))
-      );
+    /*
+     * Writes the project's rules file.
+     *
+     * This replaced a command that seeded pipeline templates. Handing an
+     * orchestrator a catalogue of pipeline shapes to choose from was solving a
+     * problem it does not have — it can see the work, so it can see the shape.
+     * What it cannot see is that this repository is CommonJS and takes no new
+     * dependencies, and that is worth writing down once.
+     */
+    vscode.commands.registerCommand('orchy.createProjectConfig', async () => {
+      const file = path.join(root, CONFIG_FILE);
+      if (!fs.existsSync(file)) {
+        fs.writeFileSync(file, exampleConfig(), 'utf8');
+      }
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
       await vscode.window.showTextDocument(doc, { preview: false });
+      void vscode.window.showInformationMessage(
+        `Orchy: ${CONFIG_FILE} is where this project's rules live. Every agent is given ` +
+          `them verbatim, so commit it — the rest of the team gets them too.`
+      );
     }),
 
     vscode.commands.registerCommand('orchy.showGraph', () =>

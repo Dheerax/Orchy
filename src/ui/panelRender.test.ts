@@ -210,13 +210,39 @@ ok('the header says a decision is wanted', panel.count.textContent.includes('app
 panel.send({
   ...base,
   plan: undefined,
-  templates: [
-    { name: 'parallel', useWhen: 'Independent pieces behind one interface.', agents: 4 },
-  ],
+  project: { path: '/repo/.orchy.json', rules: ['Plain CommonJS.'], verify: 'npm test', warnings: [] },
 });
-ok('an empty pipeline offers a shape rather than going blank', panel.grid.innerHTML.includes('parallel'));
-ok('with a prompt to copy', panel.grid.innerHTML.includes('data-copy="parallel"'));
-ok('and says when it fits', panel.grid.innerHTML.includes('Independent pieces'));
+ok(
+  'an empty pipeline shows the project rules rather than going blank',
+  panel.grid.innerHTML.includes('Plain CommonJS')
+);
+ok('and the check every agent must pass', panel.grid.innerHTML.includes('npm test'));
+
+panel.send({ ...base, plan: undefined, project: { rules: [], warnings: [] } });
+ok(
+  'with no config it offers to make one',
+  panel.grid.innerHTML.includes('data-openconfig')
+);
+
+// A malformed config costs the user the settings they got wrong, not the
+// ability to see anything.
+panel.send({
+  ...base,
+  plan: undefined,
+  project: { path: '/repo/.orchy.json', rules: [], warnings: ['.orchy.json is not valid JSON'] },
+});
+ok('a broken config says so', panel.grid.innerHTML.includes('not valid JSON'));
+
+// The setup checks come first: telling someone how to start a pipeline when
+// their backend is missing sends them off to fail for an unrelated reason.
+panel.send({
+  ...base,
+  plan: undefined,
+  project: { rules: [], warnings: [] },
+  setup: [{ name: 'OpenCode installed', ok: false, detail: 'not found', fix: 'Install OpenCode' }],
+});
+ok('a broken machine is reported first', panel.grid.innerHTML.includes('Install OpenCode'));
+ok('and the wording changes to match', panel.grid.innerHTML.includes('Fix those first'));
 
 const broken = boot(source);
 broken.send({ ...base, plan: { summary: 'x', warnings: [], agents: null } });

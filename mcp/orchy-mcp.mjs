@@ -117,14 +117,16 @@ const TOOLS = [
     },
   },
   {
-    name: 'orchy_templates',
+    name: 'orchy_project',
     description:
-      'Pipeline shapes to start from, with guidance on when each one fits. Read this before ' +
-      'planning if you are unsure how to decompose the work — picking a known shape is more ' +
-      'reliable than inventing one. They are decompositions rather than scripts: adapt the ' +
-      'tasks, add deliverables and contracts, then propose with orchy_plan.',
+      "This repository's own rules, from its .orchy.json: house conventions every agent " +
+      'is given, the command its work has to pass, preferred models per tier, and its ' +
+      'budget. Read it before planning. The rules are already appended to every agent ' +
+      'brief so they do not need repeating in tasks, but they change what a sensible plan ' +
+      'looks like — a project that forbids new dependencies is not one to plan a pipeline ' +
+      'around adding a framework to.',
     inputSchema: { type: 'object', properties: {} },
-    route: '/templates',
+    route: '/project',
   },
   {
     name: 'orchy_models',
