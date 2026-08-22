@@ -150,7 +150,7 @@ export class GraphPanel {
             await vscode.commands.executeCommand('orchy.spawn');
             break;
           case 'setupLayout':
-            await vscode.commands.executeCommand('orchy.setupLayout');
+            await vscode.commands.executeCommand('orchy.openWorkspace');
             break;
           case 'cleanupTerminals':
             await vscode.commands.executeCommand('orchy.cleanupTerminals');
@@ -158,6 +158,9 @@ export class GraphPanel {
           case 'refresh':
             this.registry.rebuild();
             this.push();
+            break;
+          case 'openConfig':
+            await vscode.commands.executeCommand('orchy.createProjectConfig');
             break;
           case 'inspectAgent':
             if (msg.id) {
@@ -840,7 +843,7 @@ export class GraphPanel {
     border-bottom: 1px solid var(--line);
     gap: 12px; z-index: 10;
   }
-  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
+  .brand-unused { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
   .brand .logo { color: var(--running); font-size: 14px; font-weight: 700; }
   
   /* Mode Switcher */
@@ -905,6 +908,42 @@ export class GraphPanel {
   /* Stacked, not side by side. The pipeline diagram is wide and shallow and
      the history is a timeline, so splitting the width gave each of them the
      one dimension it did not need. */
+  /* The agents and the pipeline are the same window now. Two tabs and a panel
+     to watch one run was two more places than the work needed. */
+  #agents-pane {
+    flex: 1 1 auto; display: none; flex-direction: column; min-height: 0;
+    background: var(--bg);
+  }
+  #agents-pane.on { display: flex; }
+  #agents-body {
+    flex: 1 1 auto; overflow-y: auto; padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .acard {
+    border: 1px solid var(--line); border-radius: 9px; background: var(--card);
+    padding: 9px 12px; cursor: pointer;
+  }
+  .acard:hover { border-color: var(--running); }
+  .acard.sel { border-color: var(--running);
+               background: color-mix(in srgb, var(--running) 7%, var(--card)); }
+  .ahead { display: flex; align-items: baseline; gap: 9px; }
+  .adot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
+          align-self: center; }
+  .aid { font-family: var(--mono); font-size: 11px; color: var(--fg); font-weight: 600; }
+  .arole { font-size: 11px; color: var(--muted); }
+  .ameta { margin-left: auto; display: flex; gap: 10px; font-size: 10px;
+           color: var(--muted); font-family: var(--mono); }
+  .atask { font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.5;
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .adeliv { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .aacts { display: flex; gap: 4px; margin-top: 7px; }
+  .aacts button {
+    background: none; border: 1px solid var(--line); border-radius: 5px;
+    color: var(--muted); cursor: pointer; font-size: 10.5px; padding: 2px 8px;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .aacts button:hover { color: var(--running); border-color: var(--running); }
+
   #main-content {
     flex: 1 1 auto; display: flex; flex-direction: column;
     min-height: 0; position: relative;
@@ -1120,33 +1159,34 @@ export class GraphPanel {
 
 <!-- Top Mission Control Toolbar -->
 <header id="toolbar">
-  <div class="brand">
-    <span class="logo">⚡</span>
-    <span>Orchy Pipeline</span>
-  </div>
-
   <div class="mode-switch">
-    <button class="mode-btn active" data-view="split">Split</button>
-    <button class="mode-btn" data-view="workflow">Workflow</button>
-    <button class="mode-btn" data-view="tree">Git Tree</button>
+    <button class="mode-btn active" data-view="agents">Agents</button>
+    <button class="mode-btn" data-view="split">Pipeline</button>
+    <button class="mode-btn" data-view="tree">History</button>
   </div>
 
-  <div class="hud" id="hud">
-    <!-- Populated dynamically -->
-  </div>
+  <div class="hud" id="hud"></div>
 
   <div class="actions-bar">
-    <input type="text" id="search" class="search-box" placeholder="Filter agents, roles, branches">
-    <button class="tbtn primary" data-act="spawn" title="Spawn an agent"></button>
-    <button class="tbtn icon-only" data-act="setupLayout" title="Set up the editor grid"></button>
-    <button class="tbtn icon-only" id="layout-btn" data-layout="toggle" title="Stack the two views, or set them side by side"></button>
+    <input type="text" id="search" class="search-box" placeholder="Filter">
     <button class="tbtn" id="scope-btn" data-act="toggleScope" title="Show only the run in progress, or everything this workspace has ever run"></button>
+    <button class="tbtn primary" data-act="spawn" title="Spawn an agent"></button>
+    <button class="tbtn icon-only" id="layout-btn" data-layout="toggle" title="Stack the two views, or set them side by side"></button>
+    <button class="tbtn icon-only" data-act="openConfig" title="This project's rules for agents"></button>
     <button class="tbtn icon-only" data-act="cleanupTerminals" title="Close terminals whose agents are gone"></button>
     <button class="tbtn icon-only" data-act="refresh" title="Rebuild from the event log"></button>
   </div>
 </header>
 
 <!-- Main Workspace -->
+<section id="agents-pane">
+  <div class="pane-header">
+    <span>Agents</span>
+    <span id="agents-count" style="font-weight:400; opacity:.8;"></span>
+  </div>
+  <div id="agents-body"></div>
+</section>
+
 <main id="main-content">
   
   <!-- Left: Workflow DAG Canvas -->
@@ -1197,6 +1237,9 @@ export class GraphPanel {
   const api = acquireVsCodeApi();
   const hud = document.getElementById('hud');
   const dagCanvas = document.getElementById('dag-canvas');
+  const agentsPane = document.getElementById('agents-pane');
+  const agentsBody = document.getElementById('agents-body');
+  const agentsCount = document.getElementById('agents-count');
   const gitGraph = document.getElementById('git-graph');
   const gitDetail = document.getElementById('git-detail');
   const scopeBtn = document.getElementById('scope-btn');
@@ -1214,7 +1257,7 @@ export class GraphPanel {
     stats: null,
     selectedNodeId: null,
     filter: '',
-    viewMode: 'split',
+    viewMode: 'agents',
     sideBySide: false,
     zoom: 1,
     // Start fitted. Zooming in is a deliberate act, and returns to this.
@@ -1280,7 +1323,7 @@ export class GraphPanel {
       if (el) el.innerHTML = icon(name, label);
     };
     put('[data-act="spawn"]', 'spawn', 'Agent');
-    put('[data-act="setupLayout"]', 'grid');
+    put('[data-act="openConfig"]', 'doc');
     put('[data-act="cleanupTerminals"]', 'broom');
     put('[data-act="refresh"]', 'refresh');
     put('[data-zoom="in"]', 'zoomIn');
@@ -1289,8 +1332,15 @@ export class GraphPanel {
     put('#d-close', 'close');
   }
 
+  let firstPaint = true;
   function render() {
     drawToolbar();
+    if (firstPaint) {
+      firstPaint = false;
+      agentsPane.classList.add('on');
+      const main = document.getElementById('main-content');
+      if (main) main.style.display = 'none';
+    }
     if (scopeBtn) {
       scopeBtn.innerHTML = icon(
         'scope',
@@ -1305,6 +1355,7 @@ export class GraphPanel {
       layoutBtn.innerHTML = icon(state.sideBySide ? 'columns' : 'layers');
     }
     renderHud();
+    renderAgents();
     renderWorkflow();
     renderGitTree();
     if (state.selectedNodeId) {
@@ -1342,7 +1393,7 @@ export class GraphPanel {
     );
 
     if (!visibleNodes.length) {
-      dagCanvas.innerHTML = '<div class="empty-state">No pipeline agents found matching your filter.</div>';
+      dagCanvas.innerHTML = emptyState();
       return;
     }
 
@@ -1451,6 +1502,80 @@ export class GraphPanel {
    * that dogged the vertical rail, where every row drew its own idea of which
    * lanes existed.
    */
+  /**
+   * Every agent in this run, as a list rather than a wall of live terminals.
+   *
+   * The grid of transcripts lives in the session panel and answers "what is
+   * everything saying". This answers the question you have far more often —
+   * which agents exist, what each owes, and which of them is stuck — and it
+   * belongs beside the diagram of the same run rather than in another window.
+   */
+  function renderAgents() {
+    const filter = state.filter.toLowerCase();
+    const shown = state.nodes.filter(n =>
+      !filter || n.id.toLowerCase().includes(filter) ||
+      n.role.toLowerCase().includes(filter) || n.status.toLowerCase().includes(filter)
+    );
+
+    agentsCount.textContent = shown.length
+      ? shown.length + ' agent' + (shown.length === 1 ? '' : 's')
+      : '';
+
+    if (!shown.length) {
+      agentsBody.innerHTML = emptyState();
+      return;
+    }
+
+    agentsBody.innerHTML = shown.map(n => {
+      const deliv = (n.deliverablesCount || 0) > 0
+        ? '<span class="deliv-chip ' + (n.deliverablesVerified === n.deliverablesCount ? 'v-yes' : 'v-no') + '">' +
+          icon(n.deliverablesVerified === n.deliverablesCount ? 'check' : 'warn') +
+          n.deliverablesVerified + '/' + n.deliverablesCount + ' verified</span>'
+        : '<span class="deliv-chip v-no">' + icon('warn') + 'no deliverables</span>';
+
+      return '<div class="acard ' + (state.selectedNodeId === n.id ? 'sel' : '') +
+        '" data-id="' + esc(n.id) + '">' +
+        '<div class="ahead">' +
+          '<span class="adot" style="background:' + statusColor(n.status) + '"></span>' +
+          '<span class="aid">' + esc(n.id) + '</span>' +
+          '<span class="arole">' + esc(n.status.replace('_', ' ')) +
+            (n.merged ? ' · merged' : '') + '</span>' +
+          '<span class="ameta">' +
+            (n.model ? '<span>' + esc(n.model.split('/').pop()) + '</span>' : '') +
+            (n.spend > 0 ? '<span>$' + n.spend.toFixed(3) + '</span>' : '') +
+          '</span>' +
+        '</div>' +
+        '<div class="atask">' + esc(n.task || '') + '</div>' +
+        '<div class="adeliv">' + deliv + '</div>' +
+        '<div class="aacts">' +
+          '<button data-act="openTerminal" data-id="' + esc(n.id) + '">' + icon('terminal', 'Terminal') + '</button>' +
+          '<button data-act="inspect" data-id="' + esc(n.id) + '">' + icon('search', 'Details') + '</button>' +
+          '<button data-act="verify" data-id="' + esc(n.id) + '">' + icon('check', 'Verify') + '</button>' +
+          '<button data-act="merge" data-id="' + esc(n.id) + '">' + icon('merge', 'Merge') + '</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function statusColor(status) {
+    if (status === 'complete') return 'var(--done)';
+    if (status === 'failed') return 'var(--failed)';
+    if (status === 'running' || status === 'spawning') return 'var(--running)';
+    if (status === 'queued') return 'var(--muted)';
+    return 'var(--unverified)';
+  }
+
+  /* Said the same way wherever nothing has happened yet, because "empty" and
+     "broken" look identical otherwise. */
+  function emptyState() {
+    return '<div class="empty-state">' +
+      (state.filter
+        ? 'Nothing matches that filter.'
+        : 'Nothing is running. Describe the work to your orchestrator and it will ' +
+          'propose a pipeline for you to approve.') +
+      '</div>';
+  }
+
   function renderGitTree() {
     const filter = state.filter.toLowerCase();
     const matching = state.gitTree.filter(c =>
@@ -1462,7 +1587,7 @@ export class GraphPanel {
     commitCount.textContent = matching.length + ' event' + (matching.length === 1 ? '' : 's');
 
     if (!matching.length) {
-      gitGraph.innerHTML = '<div class="empty-state">No git branch events recorded yet.</div>';
+      gitGraph.innerHTML = emptyState();
       gitDetail.innerHTML = '<span class="empty-hint">Nothing has happened in this run yet.</span>';
       return;
     }
@@ -1804,16 +1929,13 @@ export class GraphPanel {
       state.viewMode = view;
       const wPane = document.getElementById('workflow-pane');
       const gPane = document.getElementById('git-tree-pane');
-      if (view === 'split') {
-        wPane.style.display = 'flex';
-        gPane.style.display = 'flex';
-      } else if (view === 'workflow') {
-        wPane.style.display = 'flex';
-        gPane.style.display = 'none';
-      } else if (view === 'tree') {
-        wPane.style.display = 'none';
-        gPane.style.display = 'flex';
-      }
+      const main = document.getElementById('main-content');
+      const agents = view === 'agents';
+      agentsPane.classList.toggle('on', agents);
+      main.style.display = agents ? 'none' : 'flex';
+      wPane.style.display = view === 'split' || view === 'workflow' ? 'flex' : 'none';
+      gPane.style.display = view === 'split' || view === 'tree' ? 'flex' : 'none';
+      render();
       return;
     }
 

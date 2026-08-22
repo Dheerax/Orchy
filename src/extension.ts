@@ -558,6 +558,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Reachable from the panel as command: URIs, so a plan can be decided even
     // when the webview's script never started. The buttons post messages when
     // the script is alive; these are the same decision by another road.
+    /*
+     * The MCP server ships inside this extension, so its path is only knowable
+     * at runtime — it moves with every version. Asking people to find it
+     * themselves is the single largest piece of friction in getting started,
+     * and getting it slightly wrong produces an orchestrator that silently has
+     * no tools rather than an error.
+     */
+    vscode.commands.registerCommand('orchy.copyMcpConfig', async () => {
+      const server = path.join(context.extensionPath, 'mcp', 'orchy-mcp.mjs');
+      const snippet = JSON.stringify(
+        { mcpServers: { orchy: { type: 'stdio', command: 'node', args: [server] } } },
+        null,
+        2
+      );
+      await vscode.env.clipboard.writeText(snippet);
+      const choice = await vscode.window.showInformationMessage(
+        'Orchy: MCP server config copied. Paste it into your orchestrator — for Claude Code ' +
+          'that is ~/.claude.json. One entry covers every workspace.',
+        'Show it'
+      );
+      if (choice) {
+        const doc = await vscode.workspace.openTextDocument({
+          content: snippet,
+          language: 'json',
+        });
+        await vscode.window.showTextDocument(doc, { preview: true });
+      }
+    }),
+
     vscode.commands.registerCommand('orchy.checkSetup', async () => {
       const checks = await runSetupCheck();
       const trouble = summarise(checks);
@@ -593,18 +622,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    vscode.commands.registerCommand('orchy.setupLayout', async () => {
-      // Deliberately a command rather than something that fires on activation —
-      // rearranging someone's editor the moment an extension installs is hostile.
-      await vscode.commands.executeCommand('vscode.setEditorLayout', {
-        orientation: 0,
-        groups: [{ size: 0.5 }, { size: 0.5 }],
-      });
-      await vscode.commands.executeCommand('workbench.view.extension.orchy');
-      WorkspacePanel.show();
-      void vscode.window.showInformationMessage(
-        'Orchy: layout ready. Agent terminals fill the editor columns; the topology panel is beside them.'
-      );
+    /*
+     * Opens the one window everything lives in.
+     *
+     * This replaced a command that rearranged the editor into columns for agent
+     * terminals. Splitting someone's editor to make room for a tool is a lot to
+     * ask of them, and it stopped being necessary once the agents, the diagram
+     * and the history shared a single tab.
+     */
+    vscode.commands.registerCommand('orchy.openWorkspace', () => {
+      GraphPanel.show(registry, worktrees);
     })
   );
 }

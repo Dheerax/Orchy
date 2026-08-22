@@ -2,7 +2,7 @@
   "name": "orchy",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code. An orchestrator plans a pipeline you approve; every agent runs in its own git worktree; you watch the branches diverge and merge.",
-  "version": "0.34.0",
+  "version": "0.35.0",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -74,10 +74,6 @@
         "icon": "$(layout)"
       },
       {
-        "command": "orchy.setupLayout",
-        "title": "Orchy: Set Up Workspace Layout"
-      },
-      {
         "command": "orchy.verify",
         "title": "Orchy: Verify Deliverables",
         "icon": "$(checklist)"
@@ -135,6 +131,14 @@
       {
         "command": "orchy.createProjectConfig",
         "title": "Orchy: Create Project Config"
+      },
+      {
+        "command": "orchy.copyMcpConfig",
+        "title": "Orchy: Copy MCP Server Config"
+      },
+      {
+        "command": "orchy.openWorkspace",
+        "title": "Orchy: Open Workspace"
       }
     ],
     "menus": {
