@@ -207,9 +207,6 @@ export class GraphPanel {
           case 'spawn':
             await vscode.commands.executeCommand('orchy.spawn');
             break;
-          case 'setupLayout':
-            await vscode.commands.executeCommand('orchy.openWorkspace');
-            break;
           case 'cleanupTerminals':
             await vscode.commands.executeCommand('orchy.cleanupTerminals');
             break;

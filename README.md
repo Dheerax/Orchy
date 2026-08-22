@@ -21,8 +21,8 @@ them verifies on disk. A backend going quiet proves nothing — it parks the ses
 at `idle_unverified`, which is a different thing and says so.
 
 **Past three or four agents, you are the bottleneck.** Not merge conflicts —
-noticing which agent is blocked. Orchy puts that count in a sidebar badge and
-makes the blocked session the only thing on screen that moves.
+noticing which agent is blocked. Orchy puts that count on the panel's own tab,
+so it is legible while you are looking at your code.
 
 **A pipeline is a shape, not a queue.** Two agents can wait on one. One agent can
 wait on three. You approve that shape before anything runs, as a diagram, and
@@ -35,9 +35,9 @@ Orchestrator (Claude Code, or any MCP client)
         │  MCP
    orchy-mcp  ──HTTP──▶  Extension host  ──▶  .orchy/events.jsonl
                               │                (append-only source of truth)
-             ┌────────────────┼──────────────────┐
-      session manager    pipeline view      sidebar + badge
-      (bottom panel)     (diagram + graph)
+                              │
+                    one window, in the panel
+                 agents · pipeline · history
 ```
 
 - **The extension host owns all state.** Every surface is a disposable renderer
@@ -118,17 +118,20 @@ and nothing else.
 
 ## What you see
 
-**Session manager** (bottom panel) — every agent's live transcript in a grid, up
-to twelve at a time. Click a commit in the graph and it becomes a roster on the
-left with one agent in full on the right: brief, deliverables and whether each
-actually verified, changed files that open a diff, tokens, spend, and the
-transcript.
+One window, in the panel beside your terminal, with three views of the same run.
 
-**Orchy: Pipeline** (command palette) — two views, stacked or side by side. On
-top, the topology: agents by stage, so the width of the widest stage is the
-parallelism you are actually buying. Below, the branch graph: time left to right,
-main across the top, each agent forking away where it was created and folding
-back where it merged.
+**Agents** — what exists and what each owes: status, model, spend, and whether
+its deliverables actually verified, with its terminal, a diff of what it changed,
+verify and merge one click away. A plan awaiting approval takes over this view,
+because the decision matters more than the run behind it.
+
+**Pipeline** — agents by stage, so the width of the widest stage is the
+parallelism you are actually buying. Fitted to the pane; zooming in is a
+deliberate act.
+
+**History** — the branch graph: time left to right, main across the top, each
+agent forking away where it was created and folding back where it merged. Every
+step is labelled, and clicking one opens that agent.
 
 ## The pipeline
 
@@ -181,7 +184,6 @@ retry; a dead server fails the same way forever.
 | Setting | Default | |
 |---|---|---|
 | `orchy.baseBranch` | `main` | Branch worktrees cut from and merge into |
-| `orchy.sessionsPerPage` | `6` | Panes per page in the session manager, up to 12 |
 | `orchy.autoMerge` | `false` | Merge a verified session when nothing is ambiguous |
 | `orchy.globalBudgetCap` | `0` | Stop a session past this spend. `0` disables |
 

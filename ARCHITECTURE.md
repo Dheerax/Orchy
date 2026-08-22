@@ -1,5 +1,12 @@
 # Orchy — Architecture & Feature Surface Spec
 
+> **Note.** This is the design document the project was built from, and parts of
+> it describe decisions that have since been revised — the agent terminals in an
+> editor grid became one panel window, and the sidebar tree became a badge on its
+> tab. It is kept because the reasoning still explains why the pieces are shaped
+> the way they are. The README describes what exists today.
+
+
 **Status:** draft for review. Nothing built yet.
 **Scope of v1:** terminal-based agentic session grid in VS Code, git-worktree isolation per agent, OpenCode as the first backend, node-graph webview as the topology view.
 

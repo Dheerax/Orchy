@@ -2,7 +2,7 @@
   "name": "orchy",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code. An orchestrator plans a pipeline you approve; every agent runs in its own git worktree; you watch the branches diverge and merge.",
-  "version": "0.36.0",
+  "version": "0.37.0",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -49,11 +49,6 @@
         "icon": "$(add)"
       },
       {
-        "command": "orchy.showGraph",
-        "title": "Orchy: Open Workspace",
-        "icon": "$(layout)"
-      },
-      {
         "command": "orchy.verify",
         "title": "Orchy: Verify Deliverables",
         "icon": "$(checklist)"
@@ -95,11 +90,6 @@
         "icon": "$(go-to-file)"
       },
       {
-        "command": "orchy.showPipeline",
-        "title": "Orchy: Open Pipeline Graph",
-        "icon": "$(type-hierarchy)"
-      },
-      {
         "command": "orchy.openTerminal",
         "title": "Orchy: Open Agent Terminal",
         "icon": "$(terminal)"
@@ -118,10 +108,33 @@
       },
       {
         "command": "orchy.openWorkspace",
-        "title": "Orchy: Open Workspace"
+        "title": "Orchy: Open"
+      },
+      {
+        "command": "orchy.cleanupTerminals",
+        "title": "Orchy: Close Stale Agent Terminals"
       }
     ],
-    "menus": {},
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "orchy.focusSession",
+          "when": "false"
+        },
+        {
+          "command": "orchy.openTerminal",
+          "when": "false"
+        },
+        {
+          "command": "orchy.openTranscript",
+          "when": "false"
+        },
+        {
+          "command": "orchy.purge",
+          "when": "false"
+        }
+      ]
+    },
     "configuration": {
       "title": "Orchy",
       "properties": {
@@ -135,13 +148,6 @@
           "default": 0,
           "description": "Stop any session whose estimated spend passes this. 0 disables the cap."
         },
-        "orchy.sessionsPerPage": {
-          "type": "number",
-          "default": 6,
-          "minimum": 1,
-          "maximum": 12,
-          "description": "How many agent panes share the workspace at once. More sessions than this move to the next page. Twelve is the ceiling — past that the panes are too small to read."
-        },
         "orchy.autoMerge": {
           "type": "boolean",
           "default": false,
@@ -153,7 +159,8 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node out/core/stateLayer.test.js && node out/core/planner.test.js && node out/core/modelPolicy.test.js && node out/core/doctor.test.js && node out/core/projectConfig.test.js && node out/backends/binaryResolution.test.js && node out/ui/gridLayout.test.js && node out/ui/panelRender.test.js && node out/ui/railGraph.test.js && node out/core/integration.test.js && node mcp/smoke.mjs"
+    "test": "npm run compile && node out/core/stateLayer.test.js && node out/core/planner.test.js && node out/core/modelPolicy.test.js && node out/core/doctor.test.js && node out/core/projectConfig.test.js && node out/backends/binaryResolution.test.js && node out/ui/panelRender.test.js && node out/ui/railGraph.test.js && node out/core/integration.test.js && node mcp/smoke.mjs",
+    "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

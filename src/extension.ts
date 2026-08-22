@@ -280,10 +280,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       output.appendLine(`[${target}] terminal: ${attach.command} ${attach.args.join(' ')}`);
     }),
 
-    vscode.commands.registerCommand('orchy.showPipeline', () =>
-      GraphPanel.show(registry, worktrees)
-    ),
-
     /*
      * Writes the project's rules file.
      *
@@ -302,10 +298,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           `them verbatim, so commit it — the rest of the team gets them too.`
       );
     }),
-
-    vscode.commands.registerCommand('orchy.showGraph', () =>
-      GraphPanel.show()
-    ),
 
     vscode.commands.registerCommand('orchy.focusSession', (arg?: unknown) => {
       const id = idOf(arg);
@@ -574,6 +566,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
+    /*
+     * Close terminals whose agents are gone.
+     *
+     * Terminals are named "<id> · <role>" and outlive their session on purpose
+     * — closing one must never kill an agent, so the reverse cannot be
+     * automatic either. But a window that has run three pipelines accumulates a
+     * row of dead TUIs attached to nothing, and closing them one at a time is
+     * the sort of chore people simply live with instead.
+     *
+     * The button for this existed and called a command that was never
+     * registered, which is worse than not having the button.
+     */
+    vscode.commands.registerCommand('orchy.cleanupTerminals', () => {
+      const live = new Set(
+        registry
+          .all()
+          .filter((s) => s.status !== 'archived')
+          .map((s) => s.id)
+      );
+      let closed = 0;
+      for (const terminal of vscode.window.terminals) {
+        const id = terminal.name.split(' \u00b7 ')[0];
+        // Only terminals this extension named, and only for agents that are
+        // gone: anything else on screen belongs to the user.
+        if (id && id !== terminal.name && !live.has(id)) {
+          terminal.dispose();
+          closed++;
+        }
+      }
+      void vscode.window.showInformationMessage(
+        closed === 0
+          ? 'Orchy: no stale agent terminals to close.'
+          : `Orchy: closed ${closed} terminal(s) whose agents are gone.`
+      );
+    }),
+
     vscode.commands.registerCommand('orchy.checkSetup', async () => {
       const checks = await runSetupCheck();
       const trouble = summarise(checks);
@@ -617,9 +645,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
      * ask of them, and it stopped being necessary once the agents, the diagram
      * and the history shared a single tab.
      */
-    vscode.commands.registerCommand('orchy.openWorkspace', () => {
-      GraphPanel.show(registry, worktrees);
-    })
+    vscode.commands.registerCommand('orchy.openWorkspace', () => GraphPanel.show())
   );
 }
 
