@@ -1480,14 +1480,16 @@ export class GraphPanel {
       const lanes = (c.activeLanes && c.activeLanes.length ? c.activeLanes : [0]);
       /*
        * Rows run newest first, so the row above is later in time and the row
-       * below is earlier. Past either end of the list a lane is assumed to
-       * continue: treating the first and last rows as boundaries made every
-       * lane end there at once, so the oldest row sprouted a curve for each of
-       * them — a fan of lines into a row none of them belonged to. That is the
-       * lines-from-nowhere.
+       * below is earlier, and a lane missing from one of them ends here.
+       *
+       * Beyond the list there is nothing, which is the truth: the newest row
+       * is where a branch that closed there stops. Pretending lanes continued
+       * past the ends was a workaround for terminating lanes on rows they did
+       * not belong to; the ownership check below handles that properly, and this made the
+       * closing dot on the newest row grow a line out of the top of the list.
        */
-      const above = i > 0 ? railCommits[i - 1].activeLanes || [0] : lanes;
-      const below = i < railCommits.length - 1 ? railCommits[i + 1].activeLanes || [0] : lanes;
+      const above = i > 0 ? railCommits[i - 1].activeLanes || [0] : [];
+      const below = i < railCommits.length - 1 ? railCommits[i + 1].activeLanes || [0] : [];
 
       for (const lane of lanes) {
         const color = laneColor(lane);

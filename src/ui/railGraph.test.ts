@@ -351,5 +351,36 @@ ok(
 const ys = [...rail.matchAll(/y[12]?="([-\d.]+)"/g)].map((m) => Number(m[1]));
 ok('nothing is drawn above the first row', Math.min(...ys) >= -0.01, `min y ${Math.min(...ys)}`);
 
+console.log('\na branch that ends on the newest row');
+
+/*
+ * The last of the stray lines: a branch archived without merging closes on the
+ * very top row, and the rail carried on above its dot to the edge of the list.
+ * Drawn beside the trunk it read as a second main line.
+ */
+const closing = drawnRail(
+  GraphPanel.prototype.buildGitTree.call(
+    {},
+    [session('solo')],
+    [spawned('solo', 1), done('solo', 2), archived('solo', 3)].reverse()
+  ) as unknown as Record<string, unknown>[]
+);
+
+const stopDot = /<circle cx="([-\d.]+)" cy="([-\d.]+)"[^>]*stroke="var\(--muted\)"/.exec(closing);
+ok('the closing row draws a stop', stopDot !== null, closing.slice(0, 200));
+
+if (stopDot) {
+  const cx = Number(stopDot[1]);
+  const cy = Number(stopDot[2]);
+  const above = [...closing.matchAll(/<line x1="([-\d.]+)" y1="([-\d.]+)" x2="[-\d.]+" y2="([-\d.]+)"/g)]
+    .map((m) => ({ x: Number(m[1]), y1: Number(m[2]), y2: Number(m[3]) }))
+    .filter((l) => Math.abs(l.x - cx) < 0.6 && Math.min(l.y1, l.y2) < cy - 0.6);
+  ok(
+    'and nothing runs above it',
+    above.length === 0,
+    `${above.length} segment(s) above the stop at y=${cy}: ${JSON.stringify(above)}`
+  );
+}
+
 console.log(failures === 0 ? `\nPASS — ${checks} checks\n` : `\n${failures} of ${checks} FAILED\n`);
 process.exit(failures === 0 ? 0 : 1);
