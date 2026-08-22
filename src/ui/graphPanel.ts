@@ -1554,7 +1554,7 @@ export class GraphPanel {
     );
 
     if (!visibleNodes.length) {
-      dagCanvas.innerHTML = emptyState();
+      dagCanvas.innerHTML = emptyState('pipeline');
       return;
     }
 
@@ -1575,7 +1575,13 @@ export class GraphPanel {
      * and the shape of a pipeline is the one thing that has to be legible in a
      * glance. Zooming in is a deliberate act now, not the starting position.
      */
-    const avail = Math.max(160, dagCanvas.clientWidth - 18);
+    /*
+     * A pane that has just been un-hidden reports a width of zero: the browser
+     * has not laid it out yet. Drawing against that produced a diagram scaled
+     * to a 160-pixel sliver, which is why switching to this view looked like
+     * the button had done nothing at all. Fall back to the window.
+     */
+    const avail = Math.max(240, (dagCanvas.clientWidth || document.body.clientWidth || 900) - 18);
     const scale = state.fitWidth ? Math.min(1, avail / W) : state.zoom;
     let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + Math.round(W * scale) +
       '" height="' + Math.round(H * scale) + '">';
@@ -1753,7 +1759,7 @@ export class GraphPanel {
       : '';
 
     if (!shown.length) {
-      agentsBody.innerHTML = emptyState();
+      agentsBody.innerHTML = emptyState('agents');
       return;
     }
 
@@ -1798,13 +1804,22 @@ export class GraphPanel {
 
   /* Said the same way wherever nothing has happened yet, because "empty" and
      "broken" look identical otherwise. */
-  function emptyState() {
-    return '<div class="empty-state">' +
-      (state.filter
-        ? 'Nothing matches that filter.'
-        : 'Nothing is running. Describe the work to your orchestrator and it will ' +
-          'propose a pipeline for you to approve.') +
-      '</div>';
+  function emptyState(where) {
+    if (state.filter) {
+      return '<div class="empty-state">Nothing matches that filter.</div>';
+    }
+    // Each view says what *it* would show. Three panes repeating one sentence
+    // is indistinguishable from a button that does not work.
+    const lines = {
+      agents: 'No agents yet. Describe the work to your orchestrator and it will propose ' +
+              'a pipeline for you to approve — every agent then appears here with what it ' +
+              'owes and whether it delivered.',
+      pipeline: 'No pipeline to draw. Once a plan is approved this shows the agents by ' +
+                'stage, so the width of the widest stage is the parallelism you are buying.',
+      history: 'No branches yet. This becomes a commit graph: main across the top, each ' +
+               'agent forking where it was created and folding back where it merged.',
+    };
+    return '<div class="empty-state">' + (lines[where] || lines.agents) + '</div>';
   }
 
   function renderGitTree() {
@@ -1818,7 +1833,7 @@ export class GraphPanel {
     commitCount.textContent = matching.length + ' event' + (matching.length === 1 ? '' : 's');
 
     if (!matching.length) {
-      gitGraph.innerHTML = emptyState();
+      gitGraph.innerHTML = emptyState('history');
       gitDetail.innerHTML = '<span class="empty-hint">Nothing has happened in this run yet.</span>';
       return;
     }
@@ -1984,7 +1999,7 @@ export class GraphPanel {
     // Fit the pane, but not past the point where the step labels stop being
     // readable — beyond that the timeline scrolls, which is what a timeline
     // does.
-    const avail = Math.max(240, gitGraph.clientWidth - 8);
+    const avail = Math.max(240, (gitGraph.clientWidth || document.body.clientWidth || 900) - 8);
     const scale = W > avail ? Math.max(0.82, avail / W) : 1;
     gitGraph.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' +
       Math.round(W * scale) + '" height="' + Math.round(H * scale) + '">' + g + '</svg>';
@@ -2172,7 +2187,9 @@ export class GraphPanel {
       main.style.display = agents ? 'none' : 'flex';
       wPane.style.display = view === 'split' || view === 'workflow' ? 'flex' : 'none';
       gPane.style.display = view === 'split' || view === 'tree' ? 'flex' : 'none';
-      render();
+      // One tick later, so the pane that was just shown has a width to be
+      // measured against.
+      setTimeout(render, 0);
       return;
     }
 

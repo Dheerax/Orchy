@@ -162,8 +162,14 @@ console.log('\nnothing running');
 const idle = boot();
 idle.send({ ...base });
 ok(
-  'says so rather than drawing an empty canvas',
-  (idle.nodes['agents-body']?.innerHTML ?? '').includes('Nothing is running')
+  'says what this view would show, rather than drawing an empty canvas',
+  (idle.nodes['agents-body']?.innerHTML ?? '').includes('No agents yet')
+);
+// Three panes repeating one sentence is indistinguishable from a button that
+// does not work — which is exactly how the mode switch read with no agents.
+ok(
+  'and each view says something different',
+  !source.includes("lines[where] || lines[where]") && source.includes('No branches yet')
 );
 
 console.log('\nagents in a run');

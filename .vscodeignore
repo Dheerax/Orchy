@@ -14,3 +14,4 @@ CONTRIBUTING.md
 *.vsix
 .orchy/**
 docs/*.example.*
+media/logo.png
