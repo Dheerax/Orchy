@@ -255,6 +255,9 @@ function drawnRail(commits: Record<string, unknown>[]): string {
     document: {
       getElementById: (id: string) => nodes[id] ?? makeEl(id),
       createElementNS: () => ({ innerHTML: '', setAttribute: () => undefined }),
+      // The toolbar paints its icons through querySelector; a stub that lacks
+      // it fails the whole script rather than the one button.
+      querySelector: () => makeEl('stub'),
       querySelectorAll: () => [],
       body: { style: { setProperty: (): void => undefined } },
       addEventListener: () => undefined,

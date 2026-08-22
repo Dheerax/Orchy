@@ -17,6 +17,9 @@ interface PanelSession {
   branch?: string;
   detail: string;
   spend: number;
+  tokens: number;
+  /** How long this agent has been alive, in seconds. */
+  age: number;
   deliverables: { spec: string; verified: boolean }[];
   changes: { path: string; status: string }[];
   transcript: TranscriptEntry[];
@@ -80,6 +83,8 @@ function surfaceOfPanel(panel: vscode.WebviewPanel): Surface {
 /** Everything the panel needs to build itself, captured once at activation. */
 export interface PanelDeps {
   registry: SessionRegistry;
+  /** The pipeline shapes on offer, so the empty panel can suggest one. */
+  templates: () => { name: string; useWhen: string; agents: number }[];
   worktrees: WorktreeManager;
   backend: AgentBackend;
   handleOf: (id: string) => BackendHandle | undefined;
@@ -117,6 +122,7 @@ export class WorkspacePanel {
   private pending: NodeJS.Timeout | undefined;
 
   private readonly registry: SessionRegistry;
+  private readonly templates: () => { name: string; useWhen: string; agents: number }[];
   private readonly worktrees: WorktreeManager;
   private readonly backend: AgentBackend;
   private readonly handleOf: (id: string) => BackendHandle | undefined;
@@ -131,6 +137,7 @@ export class WorkspacePanel {
     deps: PanelDeps
   ) {
     this.registry = deps.registry;
+    this.templates = deps.templates;
     this.worktrees = deps.worktrees;
     this.backend = deps.backend;
     this.handleOf = deps.handleOf;
@@ -386,6 +393,7 @@ export class WorkspacePanel {
     id?: string;
     file?: string;
     page?: number;
+    text?: string;
   }): Promise<void> {
     switch (msg.type) {
       case 'ready':
@@ -399,6 +407,17 @@ export class WorkspacePanel {
       case 'inspect':
         WorkspacePanel.inspected = msg.id;
         await this.push();
+        break;
+      case 'copy':
+        // Through the host rather than the webview: the clipboard API is
+        // unavailable in a webview often enough that it cannot be relied on,
+        // and silently copying nothing is worse than not offering it.
+        if (msg.text) {
+          await vscode.env.clipboard.writeText(msg.text);
+          void vscode.window.showInformationMessage(
+            'Copied. Paste it to your orchestrator to start this pipeline.'
+          );
+        }
         break;
       case 'closeInspect':
         WorkspacePanel.inspected = undefined;
@@ -526,6 +545,8 @@ export class WorkspacePanel {
         branch: session.worktree?.branch,
         detail: this.detail(session),
         spend: session.budget.costEstimate,
+        tokens: session.budget.tokensUsed,
+        age: Math.max(0, Math.round((Date.now() - Date.parse(session.createdAt)) / 1000)),
         deliverables: session.deliverables.map((d) => ({ spec: d.spec, verified: d.verified })),
         changes: this.changesOf(session),
         transcript: hidden ? [] : await this.transcriptOf(session),
@@ -546,6 +567,7 @@ export class WorkspacePanel {
         blocked: this.registry.needingAttention().length,
         archived: this.registry.all().length - live.length,
         plan: WorkspacePanel.activePlan,
+        templates: this.templates(),
       },
     });
   }
@@ -820,7 +842,20 @@ export class WorkspacePanel {
   .quiet { color: var(--muted); font-size: 11px; }
   #plan .actions .no:hover { border-color: var(--failed); color: var(--failed); }
 
-  .empty { color: var(--muted); max-width: 560px; line-height: 1.7; margin: auto; text-align: center; }
+  .empty { color: var(--muted); max-width: 640px; line-height: 1.7; margin: auto; }
+  .empty p { text-align: center; }
+  .shapes { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; text-align: left; }
+  .shape { border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px;
+           background: var(--card); }
+  .shape:hover { border-color: var(--running); }
+  .sname { display: flex; align-items: baseline; gap: 9px; font-weight: 600; color: var(--fg);
+           font-size: 12.5px; }
+  .scount { font-family: var(--mono); font-size: 10px; color: var(--muted); font-weight: 400; }
+  .scopy { margin-left: auto; background: none; border: 1px solid var(--line);
+           border-radius: 5px; color: var(--muted); cursor: pointer; font-size: 10.5px;
+           padding: 2px 8px; }
+  .scopy:hover { color: var(--running); border-color: var(--running); }
+  .swhen { font-size: 11px; margin-top: 3px; line-height: 1.5; }
   .empty code { background: var(--vscode-textCodeBlock-background); padding: 1px 5px; border-radius: 3px; }
 </style>
 </head>
@@ -895,7 +930,8 @@ export class WorkspacePanel {
       '<div class="head" data-focus="' + esc(s.id) + '">' +
         '<span class="dot"></span><span class="id">' + esc(s.id) + '</span>' +
         '<span class="role">' + esc(s.role) + '</span>' +
-        (s.spend > 0 ? '<span class="spend">' + s.spend.toFixed(3) + '</span>' : '') +
+        (s.tokens > 0 ? '<span class="spend">' + compact(s.tokens) + ' tok</span>' : '') +
+        (s.spend > 0 ? '<span class="spend">$' + s.spend.toFixed(3) + '</span>' : '') +
         '<span class="icons">' +
           '<button data-act="openTab" data-id="' + esc(s.id) + '" title="Open a live terminal for this agent">&#10697;</button>' +
           '<button data-act="openSide" data-id="' + esc(s.id) + '" title="Open a live terminal to the side">&#8677;</button>' +
@@ -1111,6 +1147,8 @@ export class WorkspacePanel {
           '<span>status <b>' + esc(chosen.status.replace('_', ' ')) + '</b></span>' +
           (chosen.branch ? '<span>branch <b>' + esc(chosen.branch) + '</b></span>' : '') +
           (chosen.spend > 0 ? '<span>spend <b>$' + chosen.spend.toFixed(3) + '</b></span>' : '') +
+          (chosen.tokens > 0 ? '<span>tokens <b>' + compact(chosen.tokens) + '</b></span>' : '') +
+          '<span>alive <b>' + duration(chosen.age) + '</b></span>' +
           (chosen.detail ? '<span>' + esc(chosen.detail) + '</span>' : '') +
         '</div>' +
         '<div class="sect">Brief</div><div class="rtask">' + esc(chosen.name || '') + '</div>' +
@@ -1126,6 +1164,53 @@ export class WorkspacePanel {
           '<button class="danger" data-act="archive" data-id="' + esc(chosen.id) + '">archive</button>' +
         '</span></div>' +
       '</div>';
+  }
+
+  /* Token counts are read at a glance or not at all: 128k, not 128,431. */
+  function compact(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return Math.round(n / 1000) + 'k';
+    return String(n);
+  }
+
+  function duration(seconds) {
+    if (seconds < 90) return seconds + 's';
+    if (seconds < 5400) return Math.round(seconds / 60) + 'm';
+    return (seconds / 3600).toFixed(1) + 'h';
+  }
+
+  /*
+   * What to do when nothing is running.
+   *
+   * "No active agents" is true and useless. The hard part of using this tool is
+   * not spawning an agent, it is deciding what shape the work should take — so
+   * the empty panel offers the shapes, and hands over an instruction that can
+   * be pasted straight to an orchestrator rather than describing one.
+   */
+  function emptyHtml(d) {
+    const shapes = (d.templates || []).map(t =>
+      '<div class="shape">' +
+        '<div class="sname">' + esc(t.name) +
+          '<span class="scount">' + t.agents + ' agent' + (t.agents === 1 ? '' : 's') + '</span>' +
+          '<button class="scopy" data-copy="' + esc(t.name) + '">Copy prompt</button>' +
+        '</div>' +
+        '<div class="swhen">' + esc(t.useWhen) + '</div>' +
+      '</div>').join('');
+
+    return '<div class="empty">' +
+      '<p>Nothing is running. Describe the work to your orchestrator and it will ' +
+      'propose a pipeline for you to approve \u2014 or start from one of these shapes.</p>' +
+      (shapes ? '<div class="shapes">' + shapes + '</div>' : '') +
+      '</div>';
+  }
+
+  /** The instruction a user can paste without having to write it themselves. */
+  function promptFor(name) {
+    return 'Use the orchy tools. Read orchy_guide and orchy_models first, then plan ' +
+      'this work as a "' + name + '" pipeline with orchy_plan \u2014 adapt the shape to ' +
+      'the task rather than following it literally, give every agent deliverables and ' +
+      'a provides/needs contract, and match each model to what its agent actually has ' +
+      'to decide.\\n\\nThe work: ';
   }
 
   function statusColor(status) {
@@ -1166,9 +1251,7 @@ export class WorkspacePanel {
     if (!d.sessions.length) {
       count.textContent = '';
       hint.textContent = d.archived ? d.archived + ' archived' : '';
-      grid.innerHTML = '<p class="empty">No active agents.<br><br>' +
-        'Ask your orchestrator to spawn some, or run <code>Orchy: Spawn Agent Session</code>. ' +
-        'Each gets its own git worktree and appears here.</p>';
+      grid.innerHTML = emptyHtml(d);
       return;
     }
 
@@ -1204,6 +1287,11 @@ export class WorkspacePanel {
     }
     const plan = e.target.closest('[data-plan]');
     if (plan) { api.postMessage({ type: plan.dataset.plan }); return; }
+    const copy = e.target.closest('[data-copy]');
+    if (copy) {
+      api.postMessage({ type: 'copy', text: promptFor(copy.dataset.copy) });
+      return;
+    }
     const pick = e.target.closest('[data-inspect]');
     if (pick) { api.postMessage({ type: 'inspect', id: pick.dataset.inspect }); return; }
     if (e.target.closest('[data-close]')) { api.postMessage({ type: 'closeInspect' }); return; }

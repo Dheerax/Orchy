@@ -2,7 +2,7 @@
   "name": "orchy",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code — a grid of isolated agents, driven by an orchestrator, with live topology.",
-  "version": "0.29.0",
+  "version": "0.30.0",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -239,7 +239,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node out/core/stateLayer.test.js && node out/core/planner.test.js && node out/backends/binaryResolution.test.js && node out/ui/gridLayout.test.js && node out/ui/panelRender.test.js && node out/ui/railGraph.test.js && node out/core/integration.test.js && node mcp/smoke.mjs"
+    "test": "npm run compile && node out/core/stateLayer.test.js && node out/core/planner.test.js && node out/core/modelPolicy.test.js && node out/backends/binaryResolution.test.js && node out/ui/gridLayout.test.js && node out/ui/panelRender.test.js && node out/ui/railGraph.test.js && node out/core/integration.test.js && node mcp/smoke.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

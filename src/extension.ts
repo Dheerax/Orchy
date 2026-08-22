@@ -72,6 +72,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     ...WorkspacePanel.bind({
       registry,
+      templates: () =>
+        new TemplateLibrary(orchyDir).all().map((t) => ({
+          name: t.name,
+          useWhen: t.useWhen,
+          agents: t.agents.length,
+        })),
       worktrees,
       backend,
       handleOf: (id) => orchestrator.handleOf(id),
@@ -115,6 +121,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Reclaim agents a previous window left running before anything reconciles
   // them away, so a reload does not strand live work off-screen.
+  // What the backend can run, learned once at startup and again whenever a
+  // plan is about to be resolved. A window left open for a day should not be
+  // choosing models from yesterday's catalogue.
+  void orchestrator.refreshModels().then((count) => {
+    if (count > 0) {
+      output.appendLine(`${count} model(s) available for agents.`);
+    }
+  });
+
   void orchestrator.adoptExisting().then((adopted) => {
     if (adopted.length > 0) {
       output.appendLine(`Reconnected ${adopted.length} session(s) from a previous window.`);

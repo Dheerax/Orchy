@@ -207,8 +207,16 @@ ok('and a diagram, since there is more than one stage', panel.grid.innerHTML.inc
 ok('nothing fell over', !panel.grid.innerHTML.includes('could not draw'));
 ok('the header says a decision is wanted', panel.count.textContent.includes('approval'));
 
-panel.send({ ...base, plan: undefined });
-ok('an empty pipeline says so rather than going blank', panel.grid.innerHTML.includes('No active agents'));
+panel.send({
+  ...base,
+  plan: undefined,
+  templates: [
+    { name: 'parallel', useWhen: 'Independent pieces behind one interface.', agents: 4 },
+  ],
+});
+ok('an empty pipeline offers a shape rather than going blank', panel.grid.innerHTML.includes('parallel'));
+ok('with a prompt to copy', panel.grid.innerHTML.includes('data-copy="parallel"'));
+ok('and says when it fits', panel.grid.innerHTML.includes('Independent pieces'));
 
 const broken = boot(source);
 broken.send({ ...base, plan: { summary: 'x', warnings: [], agents: null } });

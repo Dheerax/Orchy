@@ -105,6 +105,22 @@ export class OpenCodeClient {
     await this.req('DELETE', `/session/${sessionId}`);
   }
 
+  /**
+   * Every model the server has a provider configured for.
+   *
+   * Deliberately the config route rather than the per-session one: the latter
+   * is scoped to a project and reports only what that project has used, which
+   * is not the question "what could this agent run on".
+   */
+  async providerModels(): Promise<
+    { providerID: string; models: Record<string, Record<string, unknown>> }[]
+  > {
+    const raw = await this.req<{
+      providers: { id: string; models: Record<string, Record<string, unknown>> }[];
+    }>('GET', '/config/providers');
+    return (raw.providers ?? []).map((p) => ({ providerID: p.id, models: p.models ?? {} }));
+  }
+
   async listSessions(): Promise<OpenCodeSession[]> {
     const wrapped = await this.req<{ data: OpenCodeSession[] }>('GET', '/api/session');
     return wrapped.data;

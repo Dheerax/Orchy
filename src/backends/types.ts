@@ -69,6 +69,14 @@ export interface AgentBackend {
    */
   prepare?(opts: SpawnOpts): Promise<BackendHandle>;
   begin?(handle: BackendHandle, task: string): Promise<void>;
+  /**
+   * What this backend can currently run, if it can say.
+   *
+   * Optional because a backend that cannot enumerate its models is still
+   * usable — the policy simply stops second-guessing what it is asked for.
+   */
+  models?(): Promise<import('../core/modelPolicy').ModelInfo[]>;
+
   send(handle: BackendHandle, text: string): Promise<void>;
   interrupt(handle: BackendHandle, reason: string): Promise<void>;
   kill(handle: BackendHandle): Promise<void>;

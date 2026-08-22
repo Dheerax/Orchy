@@ -81,6 +81,7 @@ check('all tools are listed', names, [
   'orchy_kill',
   'orchy_list',
   'orchy_merge',
+  'orchy_models',
   'orchy_plan',
   'orchy_plan_status',
   'orchy_relay',

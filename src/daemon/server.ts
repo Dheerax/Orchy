@@ -242,6 +242,28 @@ export class DaemonServer {
           panel: this.onDiagnostics?.() ?? { open: false, note: 'No panel surface registered.' },
         };
 
+      case '/models': {
+        await this.orchestrator.refreshModels();
+        const models = this.orchestrator.models.models;
+        return {
+          count: models.length,
+          models: models.map((m) => ({
+            id: m.id,
+            name: m.name,
+            tier: this.orchestrator.models.tierOf(m.id),
+            input_cost_per_mtok: m.inputCost,
+            output_cost_per_mtok: m.outputCost,
+            context: m.context,
+          })),
+          note:
+            'Pick per agent by what the work needs: a cheap model for mechanical ' +
+            'edits, a strong one where correctness is actually decided. Naming a ' +
+            'model that is not on this list is not fatal — Orchy substitutes the ' +
+            'nearest available model of the same tier and records that it did — ' +
+            'but choosing from here is how you get what you intended.',
+        };
+      }
+
       case '/plan_status':
         return this.planStatus(String(body.plan_id ?? ''));
 

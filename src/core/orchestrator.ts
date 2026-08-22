@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { AgentBackend, BackendHandle } from '../backends/types';
 import { ContractChecker } from './contractChecker';
 import { DeliverableVerifier } from './deliverableVerifier';
+import { ModelPolicy, looksLikeModelFailure } from './modelPolicy';
 import { Planner } from './planner';
 import { SessionRegistry } from './sessionRegistry';
 import {
@@ -59,6 +60,8 @@ export interface OrchyConfig {
  */
 export class Orchestrator extends EventEmitter {
   private handles = new Map<string, BackendHandle>();
+  /** What the backend can currently run. Empty until the catalogue is fetched. */
+  readonly models = new ModelPolicy();
   private unsubscribes = new Map<string, () => void>();
   private counters = new Map<string, number>();
   private poller: NodeJS.Timeout | undefined;
@@ -89,6 +92,28 @@ export class Orchestrator extends EventEmitter {
    * no orchestrator turns — and it means the pipeline advances on its own rather
    * than only when somebody thinks to look.
    */
+  /**
+   * Learn what the backend can run.
+   *
+   * Cheap, and worth redoing: a provider can be added or a key can expire while
+   * the window is open, and a plan approved an hour later should be resolved
+   * against what is true now rather than what was true at startup.
+   */
+  async refreshModels(): Promise<number> {
+    if (!this.backend.models) {
+      return 0;
+    }
+    try {
+      const models = await this.backend.models();
+      this.models.replace(models);
+      return this.models.models.length;
+    } catch {
+      // A backend that cannot list its models is not a broken backend. The
+      // policy simply stops second-guessing what it is asked for.
+      return 0;
+    }
+  }
+
   private startWatching(intervalMs = 2000): void {
     this.poller = setInterval(() => void this.sweep(), intervalMs);
   }
@@ -286,21 +311,82 @@ export class Orchestrator extends EventEmitter {
     if (!session) {
       return;
     }
-    const opts = {
-      sessionId: id,
-      task: this.decorateTask(
-        req.task,
-        session.deliverables,
-        session.worktree?.path,
-        session.agreement
-      ),
-      directory: session.worktree?.path ?? this.worktrees.root,
-      agent: req.agent,
-      model: req.model,
-      autoApprove: req.autoApprove,
-    };
+    const task = this.decorateTask(
+      req.task,
+      session.deliverables,
+      session.worktree?.path,
+      session.agreement
+    );
 
-    try {
+    /*
+     * Models to try, best first.
+     *
+     * A model named in a plan is a preference, not a guarantee: providers are
+     * reconfigured, free tiers are withdrawn, and a plan written last month can
+     * name something that no longer exists. Losing a session to that means
+     * losing work that had nothing wrong with it, so an unusable model costs a
+     * retry on the next best one of the same kind instead.
+     */
+    const candidates = this.models.candidates(req.model);
+    const attempts = candidates.length > 0 ? candidates : [req.model];
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < attempts.length; attempt++) {
+      const model = attempts[attempt];
+      const opts = {
+        sessionId: id,
+        task,
+        directory: session.worktree?.path ?? this.worktrees.root,
+        agent: req.agent,
+        model,
+        autoApprove: req.autoApprove,
+      };
+
+      try {
+        await this.attempt(id, opts, req, model, attempt > 0 ? req.model : undefined);
+        return;
+      } catch (err) {
+        lastError = err;
+        const message = err instanceof Error ? err.message : String(err);
+        // Only a model problem is worth trying another model for. Anything else
+        // — a missing worktree, a dead server — will fail identically forever.
+        if (!looksLikeModelFailure(message) || attempt === attempts.length - 1) {
+          break;
+        }
+        this.cleanUpFailedAttempt(id);
+      }
+    }
+
+    this.registry.record({
+      type: 'status',
+      session: id,
+      status: 'failed',
+      error: lastError instanceof Error ? lastError.message : String(lastError),
+    });
+  }
+
+  /** Drop a half-attached handle so the next attempt starts clean. */
+  private cleanUpFailedAttempt(id: string): void {
+    this.unsubscribes.get(id)?.();
+    this.unsubscribes.delete(id);
+    this.handles.delete(id);
+  }
+
+  private async attempt(
+    id: string,
+    opts: {
+      sessionId: string;
+      task: string;
+      directory: string;
+      agent?: string;
+      model?: string;
+      autoApprove?: boolean;
+    },
+    req: SpawnRequest,
+    model: string | undefined,
+    replacing: string | undefined
+  ): Promise<void> {
+    {
       // Subscribe between creating the session and prompting it. Doing both in
       // one call meant the first events could land before anyone was listening,
       // which showed up as the last-spawned agent looking stuck.
@@ -319,13 +405,19 @@ export class Orchestrator extends EventEmitter {
         this.registry.record({ type: 'attached', session: id, handle: handle.id });
         this.registry.record({ type: 'status', session: id, status: 'running' });
       }
-    } catch (err) {
-      this.registry.record({
-        type: 'status',
-        session: id,
-        status: 'failed',
-        error: err instanceof Error ? err.message : String(err),
-      });
+      // Recorded whenever the model differs from what was asked for, so the
+      // substitution shows up in the history rather than only in the result.
+      if (model && model !== replacing) {
+        this.registry.record({ type: 'model', session: id, model });
+      }
+      if (replacing && model !== replacing) {
+        this.registry.record({
+          type: 'message',
+          session: id,
+          to: id,
+          summary: `${replacing} was unavailable; running on ${model} instead`,
+        });
+      }
     }
   }
 

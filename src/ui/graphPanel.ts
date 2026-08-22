@@ -889,6 +889,17 @@ export class GraphPanel {
   }
   .tbtn:hover { border-color: var(--running); color: var(--running); }
   .tbtn.primary { background: color-mix(in srgb, var(--running) 20%, var(--bg)); border-color: var(--running); }
+  /* Square, so a row of icon buttons reads as a row rather than as boxes of
+     differing width. */
+  .tbtn.icon-only { padding: 3px; width: 26px; justify-content: center; }
+  /* Icons inherit the button's colour, which is what makes hover and the theme
+     work without a second rule for every state. */
+  .ic {
+    width: 13px; height: 13px; flex: 0 0 auto;
+    fill: none; stroke: currentColor; stroke-width: 1.5;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .icon-btn .ic { width: 12px; height: 12px; }
 
   /* Main Workspace Area */
   /* Stacked, not side by side. The pipeline diagram is wide and shallow and
@@ -1033,6 +1044,7 @@ export class GraphPanel {
   .git-detail { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   
   .git-chips { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+  .deliv-chip .ic { width: 10px; height: 10px; margin-right: 3px; vertical-align: -1px; }
   .deliv-chip {
     font-size: 9.5px; font-family: var(--mono); padding: 0 5px; border-radius: 3px;
     border: 1px solid var(--line); background: var(--bg);
@@ -1124,13 +1136,13 @@ export class GraphPanel {
   </div>
 
   <div class="actions-bar">
-    <input type="text" id="search" class="search-box" placeholder="Filter agents, roles, branches...">
-    <button class="tbtn primary" data-act="spawn">+ Spawn</button>
-    <button class="tbtn" data-act="setupLayout">⊞ Grid</button>
-    <button class="tbtn" id="layout-btn" data-layout="toggle" title="Stack the two views, or put them side by side">\u25a4 Stacked</button>
-    <button class="tbtn" id="scope-btn" data-act="toggleScope" title="Show only the pipeline you are running, or everything this workspace has ever run">This run</button>
-    <button class="tbtn" data-act="cleanupTerminals">🧹 Terminals</button>
-    <button class="tbtn" data-act="refresh">⟳</button>
+    <input type="text" id="search" class="search-box" placeholder="Filter agents, roles, branches">
+    <button class="tbtn primary" data-act="spawn" title="Spawn an agent"></button>
+    <button class="tbtn icon-only" data-act="setupLayout" title="Set up the editor grid"></button>
+    <button class="tbtn icon-only" id="layout-btn" data-layout="toggle" title="Stack the two views, or set them side by side"></button>
+    <button class="tbtn" id="scope-btn" data-act="toggleScope" title="Show only the run in progress, or everything this workspace has ever run"></button>
+    <button class="tbtn icon-only" data-act="cleanupTerminals" title="Close terminals whose agents are gone"></button>
+    <button class="tbtn icon-only" data-act="refresh" title="Rebuild from the event log"></button>
   </div>
 </header>
 
@@ -1209,6 +1221,40 @@ export class GraphPanel {
     fitWidth: true
   };
 
+  /*
+   * Icons, as inline SVG on a 16-unit grid.
+   *
+   * Emoji were doing this job and doing it badly: they render in a different
+   * font on every machine, ignore the editor's colours, sit off the text
+   * baseline, and vary in width so nothing lines up. These inherit
+   * currentColor, so they follow the theme and the hover state for free, and
+   * they cost nothing to load.
+   */
+  const ICONS = {
+    spawn: 'M8 3v10M3 8h10',
+    grid: 'M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4zM9.5 9.5h4v4h-4z',
+    layers: 'M2.5 4.5h11M2.5 8h11M2.5 11.5h11',
+    columns: 'M2.5 2.5v11M8 2.5v11M13.5 2.5v11',
+    broom: 'M8 2v6M5 8h6l-1 5H6zM4.5 13.5h7',
+    refresh: 'M13 8a5 5 0 1 1-1.6-3.7M13 2.2V5h-2.8',
+    terminal: 'M3 4l3.5 3.5L3 11M8.5 12h4.5',
+    search: 'M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM10.4 10.4L14 14',
+    check: 'M3 8.5l3.5 3.5L13 4.5',
+    merge: 'M5 2.5v6a3 3 0 0 0 3 3h3M11 8.5l2.5 3-2.5 3M5 2.5a1.5 1.5 0 1 0 0 0.1',
+    scope: 'M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM8 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
+    warn: 'M8 2.5L14 13H2zM8 6.5v3M8 11.2v.1',
+    doc: 'M4 2.5h5l3 3v8H4zM9 2.5v3h3',
+    close: 'M4 4l8 8M12 4l-8 8',
+    zoomIn: 'M8 4v8M4 8h8',
+    zoomOut: 'M4 8h8',
+    fit: 'M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10',
+  };
+
+  /** An icon at text size, optionally with a label beside it. */
+  const icon = (name, label) =>
+    '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="' +
+    (ICONS[name] || '') + '"/></svg>' + (label ? '<span>' + esc(label) + '</span>' : '');
+
   const esc = s => String(s || '').replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -1225,12 +1271,38 @@ export class GraphPanel {
     }
   });
 
+  let toolbarDrawn = false;
+  function drawToolbar() {
+    if (toolbarDrawn) return;
+    toolbarDrawn = true;
+    const put = (sel, name, label) => {
+      const el = document.querySelector(sel);
+      if (el) el.innerHTML = icon(name, label);
+    };
+    put('[data-act="spawn"]', 'spawn', 'Agent');
+    put('[data-act="setupLayout"]', 'grid');
+    put('[data-act="cleanupTerminals"]', 'broom');
+    put('[data-act="refresh"]', 'refresh');
+    put('[data-zoom="in"]', 'zoomIn');
+    put('[data-zoom="out"]', 'zoomOut');
+    put('[data-zoom="fit"]', 'fit');
+    put('#d-close', 'close');
+  }
+
   function render() {
+    drawToolbar();
     if (scopeBtn) {
-      scopeBtn.textContent = state.showAllRuns
-        ? 'All runs · ' + (state.totalSize || 0)
-        : 'This run · ' + (state.runSize || 0);
+      scopeBtn.innerHTML = icon(
+        'scope',
+        state.showAllRuns
+          ? 'All runs · ' + (state.totalSize || 0)
+          : 'This run · ' + (state.runSize || 0)
+      );
       scopeBtn.classList.toggle('primary', !state.showAllRuns);
+    }
+    const layoutBtn = document.getElementById('layout-btn');
+    if (layoutBtn) {
+      layoutBtn.innerHTML = icon(state.sideBySide ? 'columns' : 'layers');
     }
     renderHud();
     renderWorkflow();
@@ -1575,7 +1647,7 @@ export class GraphPanel {
     }
     const chips = (chosen.deliverables || []).map(d =>
       '<span class="deliv-chip ' + (d.verified ? 'v-yes' : 'v-no') + '">' +
-      (d.verified ? '✓ ' : '⚠ ') + esc(d.spec) + '</span>').join('');
+      icon(d.verified ? 'check' : 'warn') + esc(d.spec) + '</span>').join('');
 
     gitDetail.innerHTML =
       '<div class="git-top">' +
@@ -1591,10 +1663,10 @@ export class GraphPanel {
       (chosen.detail ? '<div class="git-detail">' + esc(chosen.detail) + '</div>' : '') +
       (chips ? '<div class="git-chips">' + chips + '</div>' : '') +
       '<div class="git-actions">' +
-        '<button class="prim" data-act="openTerminal" data-id="' + esc(chosen.sessionId) + '">&gt;_ Terminal</button>' +
-        '<button data-act="inspect" data-id="' + esc(chosen.sessionId) + '">⌕ Details</button>' +
-        '<button data-act="verify" data-id="' + esc(chosen.sessionId) + '">✓ Verify</button>' +
-        '<button data-act="merge" data-id="' + esc(chosen.sessionId) + '">⑂ Merge</button>' +
+        '<button class="prim" data-act="openTerminal" data-id="' + esc(chosen.sessionId) + '">' + icon('terminal', 'Terminal') + '</button>' +
+        '<button data-act="inspect" data-id="' + esc(chosen.sessionId) + '">' + icon('search', 'Details') + '</button>' +
+        '<button data-act="verify" data-id="' + esc(chosen.sessionId) + '">' + icon('check', 'Verify') + '</button>' +
+        '<button data-act="merge" data-id="' + esc(chosen.sessionId) + '">' + icon('merge', 'Merge') + '</button>' +
       '</div>';
   }
 
@@ -1665,10 +1737,10 @@ export class GraphPanel {
       '<div class="d-section">' +
         '<div class="d-label">Quick Actions</div>' +
         '<div class="d-actions">' +
-          '<button class="d-btn primary" data-act="openTerminal" data-id="' + esc(node.id) + '">&gt;_ Open Terminal</button>' +
+          '<button class="d-btn primary" data-act="openTerminal" data-id="' + esc(node.id) + '">' + icon('terminal', 'Open terminal') + '</button>' +
           '<button class="d-btn" data-act="openTranscript" data-id="' + esc(node.id) + '">📄 Transcript</button>' +
-          '<button class="d-btn" data-act="verify" data-id="' + esc(node.id) + '">✓ Verify</button>' +
-          '<button class="d-btn" data-act="merge" data-id="' + esc(node.id) + '">⑂ Merge to Main</button>' +
+          '<button class="d-btn" data-act="verify" data-id="' + esc(node.id) + '">' + icon('check', 'Verify') + '</button>' +
+          '<button class="d-btn" data-act="merge" data-id="' + esc(node.id) + '">' + icon('merge', 'Merge to main') + '</button>' +
           '<button class="d-btn" data-act="focus" data-id="' + esc(node.id) + '">⊞ Focus Card</button>' +
           '<button class="d-btn danger" data-act="archive" data-id="' + esc(node.id) + '">Archive</button>' +
         '</div>' +
@@ -1719,7 +1791,6 @@ export class GraphPanel {
       state.sideBySide = !state.sideBySide;
       const main = document.getElementById('main-content');
       main.classList.toggle('side', state.sideBySide);
-      layoutBtn.textContent = state.sideBySide ? '▥ Side by side' : '▤ Stacked';
       renderWorkflow();
       renderGitTree();
       return;

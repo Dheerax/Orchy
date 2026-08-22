@@ -9,6 +9,7 @@ import {
   SpawnOpts,
   TranscriptEntry,
 } from './types';
+import { ModelInfo } from '../core/modelPolicy';
 import { OpenCodeClient, OpenCodeEvent } from './opencodeClient';
 
 const DEFAULT_PORT = 4096;
@@ -189,6 +190,31 @@ export class OpenCodeBackend implements AgentBackend {
   /** Send the opening prompt. Split from prepare so no early events are missed. */
   async begin(handle: BackendHandle, task: string): Promise<void> {
     await this.client.prompt(handle.id, task);
+  }
+
+  /** The live model catalogue, flattened to what a policy needs to choose. */
+  async models(): Promise<ModelInfo[]> {
+    await this.ensureServer();
+    const providers = await this.client.providerModels();
+    const out: ModelInfo[] = [];
+    for (const provider of providers) {
+      for (const [id, raw] of Object.entries(provider.models)) {
+        const cost = (raw.cost ?? {}) as { input?: number; output?: number };
+        const limit = (raw.limit ?? {}) as { context?: number };
+        const caps = (raw.capabilities ?? {}) as { tools?: boolean };
+        out.push({
+          id: `${provider.providerID}/${id}`,
+          name: String(raw.name ?? id),
+          inputCost: Number(cost.input ?? 0),
+          outputCost: Number(cost.output ?? 0),
+          context: Number(limit.context ?? 0),
+          // Absent means unknown rather than false: excluding a model because
+          // its metadata is thin would quietly shrink the catalogue.
+          tools: caps.tools !== false,
+        });
+      }
+    }
+    return out;
   }
 
   async send(handle: BackendHandle, text: string): Promise<void> {

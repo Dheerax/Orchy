@@ -127,6 +127,20 @@ const TOOLS = [
     route: '/templates',
   },
   {
+    name: 'orchy_models',
+    description:
+      'Every model these agents can actually run on, with its tier and its price. ' +
+      'Read this before planning anything that names models. Matching the model to the ' +
+      'work is most of what makes a pipeline cheap or expensive: mechanical edits behind ' +
+      'a clear interface do not need a frontier model, and the agent that decides whether ' +
+      'the result is correct should not be run on the cheapest thing available. Naming a ' +
+      'model that is not listed is not fatal — Orchy substitutes the nearest available ' +
+      'model of the same tier and records the substitution — but the catalogue changes, ' +
+      'so choosing from it is how you get what you meant.',
+    inputSchema: { type: 'object', properties: {} },
+    route: '/models',
+  },
+  {
     name: 'orchy_plan',
     description:
       'Propose a pipeline and wait for the user to approve it. THIS IS THE NORMAL WAY TO ' +
