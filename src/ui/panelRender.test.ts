@@ -217,6 +217,34 @@ ok(
   broken.grid.innerHTML.includes('could not draw')
 );
 
+console.log('\nreading one agent');
+
+const agents = ['core-1', 'email-1'].map((id, i) => ({
+  id,
+  name: `${id} brief`,
+  role: id.split('-')[0],
+  status: i === 0 ? 'complete' : 'running',
+  branch: `agent/${id}`,
+  detail: '',
+  spend: 0.012,
+  deliverables: [{ spec: `src/${id}.js`, verified: i === 0 }],
+  changes: [{ path: `src/${id}.js`, status: 'M' }],
+  transcript: [],
+}));
+
+panel.send({ ...base, sessions: agents, rows: [2], inspected: 'email-1' });
+ok('the roster lists every agent', agents.every((a) => panel.grid.innerHTML.includes(a.id)));
+ok('the chosen one is marked', panel.grid.innerHTML.includes('rrow on'));
+ok('its branch is shown', panel.grid.innerHTML.includes('agent/email-1'));
+ok('its deliverable is shown', panel.grid.innerHTML.includes('src/email-1.js'));
+ok('and there is a way back', panel.grid.innerHTML.includes('data-close'));
+
+panel.send({ ...base, sessions: agents, rows: [2], inspected: 'gone-9' });
+ok(
+  'asking for an agent that is not here falls back to the grid',
+  !panel.grid.innerHTML.includes('class="roster"')
+);
+
 console.log('\nthe panel with no script at all');
 
 const fallback = WorkspacePanel.bootHtml(plan);

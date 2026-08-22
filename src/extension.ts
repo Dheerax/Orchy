@@ -270,8 +270,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!id) {
         return;
       }
-      WorkspacePanel.show();
-      WorkspacePanel.refreshIfOpen();
+      // Opens the session manager on that agent: roster on the left, everything
+      // known about the one you picked on the right.
+      WorkspacePanel.inspect(id);
     }),
 
     vscode.commands.registerCommand('orchy.spawn', async () => {

@@ -159,6 +159,11 @@ export class GraphPanel {
             this.registry.rebuild();
             this.push();
             break;
+          case 'inspectAgent':
+            if (msg.id) {
+              await vscode.commands.executeCommand('orchy.focusSession', msg.id);
+            }
+            break;
           case 'toggleScope':
             this.showAllRuns = !this.showAllRuns;
             this.push();
@@ -893,6 +898,12 @@ export class GraphPanel {
     flex: 1 1 auto; display: flex; flex-direction: column;
     min-height: 0; position: relative;
   }
+  #main-content.side { flex-direction: row; }
+  #main-content.side #workflow-pane {
+    border-bottom: none; border-right: 1px solid var(--line);
+    min-height: 0; min-width: 300px;
+  }
+  #main-content.side #git-tree-pane { min-width: 320px; }
 
   /* Left Pane: Workflow DAG */
   #workflow-pane {
@@ -1116,6 +1127,7 @@ export class GraphPanel {
     <input type="text" id="search" class="search-box" placeholder="Filter agents, roles, branches...">
     <button class="tbtn primary" data-act="spawn">+ Spawn</button>
     <button class="tbtn" data-act="setupLayout">⊞ Grid</button>
+    <button class="tbtn" id="layout-btn" data-layout="toggle" title="Stack the two views, or put them side by side">\u25a4 Stacked</button>
     <button class="tbtn" id="scope-btn" data-act="toggleScope" title="Show only the pipeline you are running, or everything this workspace has ever run">This run</button>
     <button class="tbtn" data-act="cleanupTerminals">🧹 Terminals</button>
     <button class="tbtn" data-act="refresh">⟳</button>
@@ -1191,6 +1203,7 @@ export class GraphPanel {
     selectedNodeId: null,
     filter: '',
     viewMode: 'split',
+    sideBySide: false,
     zoom: 1,
     // Start fitted. Zooming in is a deliberate act, and returns to this.
     fitWidth: true
@@ -1449,13 +1462,35 @@ export class GraphPanel {
 
     let g = '';
 
+    /*
+     * How far a lane's line runs, in pixels rather than columns.
+     *
+     * A branch is alive through the column it merges in — that is where its
+     * curve comes from — but the merge dot itself sits up on main, so running
+     * the straight line all the way to that column left a stub poking out
+     * under the dot, past the curve that had already carried the branch away.
+     * The line has to stop where the curve takes over.
+     */
+    const LEAD = COL * 0.92;
+    const endsAt = {};
+    cols.forEach((c, i) => {
+      if (c.kind === 'merge' && c.fromLane > 0) {
+        endsAt[c.fromLane] = cx(i) - LEAD;
+      }
+    });
+
     // Lane lines, and the name of whose branch each one is.
     for (const key of Object.keys(span)) {
       const lane = Number(key);
       const [from, to] = span[lane];
       const color = laneColor(lane);
       const x1 = lane === 0 ? PADX - 60 : cx(from);
-      const x2 = lane === 0 ? cx(cols.length - 1) + 22 : cx(to);
+      const x2 = lane === 0
+        ? cx(cols.length - 1) + 22
+        : (endsAt[lane] !== undefined ? endsAt[lane] : cx(to));
+      if (x2 <= x1) {
+        continue;
+      }
       g += '<line x1="' + x1 + '" y1="' + cy(lane) + '" x2="' + x2 + '" y2="' + cy(lane) +
         '" stroke="' + color + '" stroke-width="2.2" opacity="' +
         (lane === 0 ? 0.95 : 0.75) + '" stroke-linecap="round"/>';
@@ -1467,9 +1502,9 @@ export class GraphPanel {
     // Where branches leave main and where they come back.
     cols.forEach((c, i) => {
       if (c.kind === 'fork' && c.lane > 0) {
-        g += curve(cx(i) - COL * 0.92, cy(0), cx(i), cy(c.lane), laneColor(c.lane));
+        g += curve(cx(i) - LEAD, cy(0), cx(i), cy(c.lane), laneColor(c.lane));
       } else if (c.kind === 'merge' && c.fromLane > 0) {
-        g += curve(cx(i) - COL * 0.92, cy(c.fromLane), cx(i), cy(0), laneColor(c.fromLane));
+        g += curve(cx(i) - LEAD, cy(c.fromLane), cx(i), cy(0), laneColor(c.fromLane));
       }
     });
 
@@ -1670,8 +1705,23 @@ export class GraphPanel {
     const commit = e.target.closest('.node');
     if (commit) {
       const id = commit.dataset.id;
-      state.selectedNodeId = (state.selectedNodeId === id) ? null : id;
+      state.selectedNodeId = id;
       render();
+      // The graph says what happened; the session manager below says what the
+      // agent actually is. Clicking a point should get you there.
+      api.postMessage({ type: 'inspectAgent', id: id });
+      return;
+    }
+
+    // Stacked by default; side by side for a tall window or a second monitor.
+    const layoutBtn = e.target.closest('[data-layout]');
+    if (layoutBtn) {
+      state.sideBySide = !state.sideBySide;
+      const main = document.getElementById('main-content');
+      main.classList.toggle('side', state.sideBySide);
+      layoutBtn.textContent = state.sideBySide ? '▥ Side by side' : '▤ Stacked';
+      renderWorkflow();
+      renderGitTree();
       return;
     }
 

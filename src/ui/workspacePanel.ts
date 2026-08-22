@@ -17,6 +17,7 @@ interface PanelSession {
   branch?: string;
   detail: string;
   spend: number;
+  deliverables: { spec: string; verified: boolean }[];
   changes: { path: string; status: string }[];
   transcript: TranscriptEntry[];
 }
@@ -98,6 +99,15 @@ export class WorkspacePanel {
   private handles = new Map<string, BackendHandle>();
   private focused: string | undefined;
   private page = 0;
+  /**
+   * The agent being read in detail.
+   *
+   * A grid of twelve live transcripts answers "what is everything doing"; it
+   * is no help at all with "what did this one actually produce". Clicking a
+   * commit in the pipeline graph asks the second question, and the bottom
+   * panel is wide enough to answer it beside the list.
+   */
+  private static inspected: string | undefined;
   /**
    * Static because a plan outlives any one surface: it can arrive before the
    * view has been resolved, survive the panel being closed and reopened, and
@@ -312,6 +322,14 @@ export class WorkspacePanel {
     WorkspacePanel.current?.schedulePush();
   }
 
+  /** Open the panel on one agent, from wherever the user clicked. */
+  static inspect(id: string | undefined): void {
+    WorkspacePanel.inspected = id;
+    WorkspacePanel.show();
+    WorkspacePanel.current?.panel.reveal();
+    void WorkspacePanel.current?.push();
+  }
+
   /** Take a decided plan off the screen, script or no script. */
   static clearPlan(id: string): void {
     const panel = WorkspacePanel.current;
@@ -376,6 +394,14 @@ export class WorkspacePanel {
         break;
       case 'focus':
         this.focused = this.focused === msg.id ? undefined : msg.id;
+        await this.push();
+        break;
+      case 'inspect':
+        WorkspacePanel.inspected = msg.id;
+        await this.push();
+        break;
+      case 'closeInspect':
+        WorkspacePanel.inspected = undefined;
         await this.push();
         break;
       case 'page':
@@ -500,6 +526,7 @@ export class WorkspacePanel {
         branch: session.worktree?.branch,
         detail: this.detail(session),
         spend: session.budget.costEstimate,
+        deliverables: session.deliverables.map((d) => ({ spec: d.spec, verified: d.verified })),
         changes: this.changesOf(session),
         transcript: hidden ? [] : await this.transcriptOf(session),
       });
@@ -513,6 +540,7 @@ export class WorkspacePanel {
         sessions,
         rows: planGrid(sessions.length),
         focused: this.focused,
+        inspected: WorkspacePanel.inspected,
         page: this.page,
         pages,
         blocked: this.registry.needingAttention().length,
@@ -610,6 +638,37 @@ export class WorkspacePanel {
   .hint { color: var(--muted); font-size: 11px; }
 
   #grid { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+  /* Reading one agent: the roster stays on the left so you can move between
+     them, and everything known about the chosen one fills the rest. */
+  #grid.reading { flex-direction: row; gap: 10px; }
+  .roster { flex: 0 0 210px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;
+            border-right: 1px solid var(--line); padding-right: 8px; }
+  .rrow { display: flex; align-items: baseline; gap: 6px; padding: 4px 6px; cursor: pointer;
+          border-radius: 5px; border: 1px solid transparent; font-size: 11.5px; }
+  .rrow:hover { background: var(--vscode-list-hoverBackground); }
+  .rrow.on { border-color: var(--running); background: var(--vscode-list-hoverBackground); }
+  .rrow .rdot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+  .rrow .rid { font-family: var(--mono); font-size: 10.5px; overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap; }
+  .rrow .rst { margin-left: auto; font-size: 9.5px; color: var(--muted); flex: 0 0 auto; }
+
+  .reader { flex: 1 1 auto; min-width: 0; overflow-y: auto; display: flex;
+            flex-direction: column; gap: 8px; }
+  .reader h2 { margin: 0; font-size: 14px; display: flex; align-items: baseline; gap: 8px; }
+  .reader .rmeta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11px;
+                   color: var(--muted); }
+  .reader .rmeta b { color: var(--fg); font-weight: 500; font-family: var(--mono);
+                     font-size: 10.5px; }
+  .reader .sect { font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+                  color: var(--muted); margin-top: 2px; }
+  .reader .rtask { font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; }
+  .reader .rdeliv { display: flex; flex-wrap: wrap; gap: 4px; }
+  .reader .rtranscript { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+                         max-height: 40vh; overflow-y: auto; background: var(--card); }
+  .reader .close { margin-left: auto; background: none; border: 1px solid var(--line);
+                   border-radius: 5px; color: var(--muted); cursor: pointer;
+                   font-size: 11px; padding: 2px 9px; }
+  .reader .close:hover { color: var(--fg); border-color: var(--running); }
   .row { flex: 1 1 0; display: flex; gap: 6px; min-height: 0; }
 
   .pager { display: flex; align-items: center; gap: 4px; margin-left: auto; }
@@ -1020,6 +1079,63 @@ export class WorkspacePanel {
     }
   }
 
+  /* One agent, in full: what it was asked for, what it owes, what it changed
+     and what it has been saying — beside a roster to move between them. */
+  function readerHtml(d, chosen) {
+    const roster = d.sessions.map(s =>
+      '<div class="rrow ' + (s.id === chosen.id ? 'on' : '') + '" data-inspect="' + esc(s.id) + '">' +
+        '<span class="rdot" style="background:' + statusColor(s.status) + '"></span>' +
+        '<span class="rid">' + esc(s.id) + '</span>' +
+        '<span class="rst">' + esc(s.status.replace('_', ' ')) + '</span>' +
+      '</div>').join('');
+
+    const deliv = chosen.deliverables && chosen.deliverables.length
+      ? chosen.deliverables.map(x =>
+          '<span class="pv" style="opacity:1">' + (x.verified ? '\u2713 ' : '\u26a0 ') +
+          esc(x.spec) + '</span>').join('')
+      : '<span class="quiet">none declared, so it can never verify complete</span>';
+
+    const files = chosen.changes.length
+      ? chosen.changes.map(c =>
+          '<button class="file" data-id="' + esc(chosen.id) + '" data-file="' + esc(c.path) + '">' +
+          '<span class="st">' + esc(c.status) + '</span>' + esc(c.path) + '</button>').join('')
+      : '<span class="quiet">nothing changed yet</span>';
+
+    const turns = chosen.transcript.map(turnHtml).join('');
+
+    return '<div class="roster">' + roster + '</div>' +
+      '<div class="reader">' +
+        '<h2>' + esc(chosen.role) + '<span class="pm">' + esc(chosen.id) + '</span>' +
+          '<button class="close" data-close="1">Back to the grid</button></h2>' +
+        '<div class="rmeta">' +
+          '<span>status <b>' + esc(chosen.status.replace('_', ' ')) + '</b></span>' +
+          (chosen.branch ? '<span>branch <b>' + esc(chosen.branch) + '</b></span>' : '') +
+          (chosen.spend > 0 ? '<span>spend <b>$' + chosen.spend.toFixed(3) + '</b></span>' : '') +
+          (chosen.detail ? '<span>' + esc(chosen.detail) + '</span>' : '') +
+        '</div>' +
+        '<div class="sect">Brief</div><div class="rtask">' + esc(chosen.name || '') + '</div>' +
+        '<div class="sect">Deliverables</div><div class="rdeliv">' + deliv + '</div>' +
+        '<div class="sect">Changed files</div><div class="foot">' + files + '</div>' +
+        '<div class="sect">Transcript</div>' +
+        '<div class="rtranscript body" id="body-' + esc(chosen.id) + '">' +
+          (turns || '<div class="waiting">waiting for the first turn\u2026</div>') +
+        '</div>' +
+        '<div class="foot"><span class="act">' +
+          '<button data-act="openTab" data-id="' + esc(chosen.id) + '">Open terminal</button>' +
+          '<button data-act="verify" data-id="' + esc(chosen.id) + '">verify</button>' +
+          '<button class="danger" data-act="archive" data-id="' + esc(chosen.id) + '">archive</button>' +
+        '</span></div>' +
+      '</div>';
+  }
+
+  function statusColor(status) {
+    if (status === 'complete') return 'var(--done)';
+    if (status === 'failed') return 'var(--failed)';
+    if (status === 'running' || status === 'spawning') return 'var(--running)';
+    if (status === 'queued') return 'var(--muted)';
+    return 'var(--unverified)';
+  }
+
   function paint(d) {
     renderPager(d);
 
@@ -1033,6 +1149,19 @@ export class WorkspacePanel {
     for (const el of grid.querySelectorAll('.body')) {
       scrollMemory[el.id] = { top: el.scrollTop, atEnd: el.scrollHeight - el.scrollTop - el.clientHeight < 24 };
     }
+
+    const chosen = d.inspected && d.sessions.find(s => s.id === d.inspected);
+    if (chosen) {
+      count.textContent = 'reading ' + chosen.id;
+      count.className = 'count';
+      hint.textContent = d.sessions.length + ' agent(s) in this run';
+      grid.className = 'reading';
+      grid.innerHTML = readerHtml(d, chosen);
+      const body = grid.querySelector('.rtranscript');
+      if (body) body.scrollTop = body.scrollHeight;
+      return;
+    }
+    grid.className = '';
 
     if (!d.sessions.length) {
       count.textContent = '';
@@ -1075,6 +1204,9 @@ export class WorkspacePanel {
     }
     const plan = e.target.closest('[data-plan]');
     if (plan) { api.postMessage({ type: plan.dataset.plan }); return; }
+    const pick = e.target.closest('[data-inspect]');
+    if (pick) { api.postMessage({ type: 'inspect', id: pick.dataset.inspect }); return; }
+    if (e.target.closest('[data-close]')) { api.postMessage({ type: 'closeInspect' }); return; }
     const prow = e.target.closest('[data-row]');
     if (prow) { prow.classList.toggle('open'); return; }
     const file = e.target.closest('.file');
