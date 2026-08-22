@@ -99,6 +99,12 @@ const merged = (id: string, min: number): Record<string, unknown> => ({
   t: at(min),
   seq: ++seq,
 });
+const archived = (id: string, min: number): Record<string, unknown> => ({
+  type: 'archived',
+  session: id,
+  t: at(min),
+  seq: ++seq,
+});
 const done = (id: string, min: number): Record<string, unknown> => ({
   type: 'status',
   session: id,
@@ -177,6 +183,38 @@ const wide = rows(
 );
 const maxLane = Math.max(...wide.map((r) => Math.max(r.lane, ...(r.activeLanes || [0]))));
 ok('eight live branches need eight lanes, no more', maxLane === 8, `max lane ${maxLane}`);
+
+console.log('\ntidying up is not part of a branch');
+
+/*
+ * Sessions are archived and their worktrees deleted a while after they merge.
+ * Treating that as the end of the lane kept every merged branch drawn until
+ * the last archive landed — lanes running the full height of the list, past
+ * every merge that had already closed them.
+ */
+const tidied = rows(
+  [
+    spawned('a', 1),
+    spawned('b', 2),
+    merged('a', 3),
+    merged('b', 4),
+    archived('a', 5),
+    archived('b', 6),
+  ],
+  ['a', 'b']
+);
+const laneA = tidied.find((r) => r.sessionId === 'a' && r.kind === 'fork')?.lane ?? -1;
+const mergeB = tidied.findIndex((r) => r.kind === 'merge' && r.sessionId === 'b');
+ok(
+  'a merged branch is gone by the next merge',
+  mergeB >= 0 && !(tidied[mergeB].activeLanes || []).includes(laneA),
+  `lane ${laneA} still active at row ${mergeB}: ${JSON.stringify(tidied[mergeB]?.activeLanes)}`
+);
+ok(
+  'so lanes thin out towards the newest row',
+  (tidied[0]?.activeLanes || []).length <= (tidied[tidied.length - 1]?.activeLanes || []).length,
+  `${JSON.stringify(tidied[0]?.activeLanes)} vs ${JSON.stringify(tidied[tidied.length - 1]?.activeLanes)}`
+);
 
 console.log('\nthe rail as drawn');
 

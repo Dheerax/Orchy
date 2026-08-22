@@ -344,15 +344,37 @@ export class GraphPanel {
      */
     const chronological = [...history].reverse();
     const firstSeq = new Map<string, number>();
-    const closedAt = new Map<string, number>();
+    const mergedAt = new Map<string, number>();
+    const removedAt = new Map<string, number>();
     for (const event of chronological) {
       if (!firstSeq.has(event.session)) {
         firstSeq.set(event.session, event.seq);
       }
-      if (event.type === 'merged' || event.type === 'archived' || event.type === 'purged') {
-        closedAt.set(event.session, event.seq);
+      // The earliest of each: a branch's life ends the first time it lands.
+      if (event.type === 'merged' && !mergedAt.has(event.session)) {
+        mergedAt.set(event.session, event.seq);
+      }
+      if (
+        (event.type === 'archived' || event.type === 'purged') &&
+        !removedAt.has(event.session)
+      ) {
+        removedAt.set(event.session, event.seq);
       }
     }
+    /*
+     * A merged branch ends at its merge, not at the tidying up afterwards.
+     *
+     * Archiving a session and deleting its worktree happen minutes later and
+     * were being treated as the end of the lane, so six branches that merged
+     * one after another all stayed drawn until the last archive — six lanes
+     * running the full height of the list, past every merge that had already
+     * closed them. Removal only ends a lane that never merged at all.
+     */
+    const closedAt = new Map<string, number>(
+      [...firstSeq.keys()]
+        .map((id): [string, number | undefined] => [id, mergedAt.get(id) ?? removedAt.get(id)])
+        .filter((e): e is [string, number] => e[1] !== undefined)
+    );
     // A branch that has simply gone quiet is not a branch that has ended: it
     // still exists, unmerged, and its rail should reach the top of the list.
     // Only merging or removing it closes the lane.
