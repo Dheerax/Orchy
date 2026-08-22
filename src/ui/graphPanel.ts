@@ -561,7 +561,22 @@ export class GraphPanel {
   private currentRun(sessions: Session[]): Session[] {
     const planned = sessions.filter((s) => s.planId);
     if (planned.length === 0) {
-      return sessions;
+      /*
+       * No plan ids: agents spawned one at a time, or from before Orchy
+       * recorded which run an agent belonged to. Fall back to the burst — a
+       * long quiet gap between two spawns is a run boundary, because that is
+       * what starting a new pipeline looks like from the outside.
+       */
+      const RUN_GAP_MS = 8 * 60 * 1000;
+      const byTime = [...sessions].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      let start = 0;
+      for (let i = 1; i < byTime.length; i++) {
+        const gap = Date.parse(byTime[i].createdAt) - Date.parse(byTime[i - 1].createdAt);
+        if (gap > RUN_GAP_MS) {
+          start = i;
+        }
+      }
+      return byTime.slice(start);
     }
     const newest = planned.reduce((a, b) => (a.createdAt >= b.createdAt ? a : b));
     const run = planned.filter((s) => s.planId === newest.planId);
@@ -831,7 +846,7 @@ export class GraphPanel {
 
   .git-row {
     display: flex; gap: 10px; align-items: stretch;
-    padding: 7px 8px 8px 0; cursor: pointer; position: relative;
+    padding: 5px 8px 6px 0; cursor: pointer; position: relative;
     border-left: 2px solid transparent;
   }
   .git-row:hover { background: var(--hover-bg); }
@@ -871,7 +886,11 @@ export class GraphPanel {
   .deliv-chip.v-yes { color: var(--done); border-color: color-mix(in srgb, var(--done) 40%, var(--line)); }
   .deliv-chip.v-no { color: var(--unverified); border-color: color-mix(in srgb, var(--unverified) 40%, var(--line)); }
 
-  .git-actions { display: flex; gap: 4px; align-items: center; margin-top: 4px; }
+  /* Every row carrying four buttons made each one tall enough that the graph
+     beside it was mostly empty gutter. They appear for the row under the
+     pointer, which is the only row they can be meant for. */
+  .git-actions { display: none; gap: 4px; align-items: center; margin-top: 4px; }
+  .git-row:hover .git-actions, .git-row.selected .git-actions { display: flex; }
   .git-actions button {
     background: none; border: 1px solid var(--line); border-radius: 4px;
     color: var(--muted); font-size: 10px; padding: 1px 6px; cursor: pointer;
@@ -1252,7 +1271,7 @@ export class GraphPanel {
     const rows = Array.from(gitTreeList.querySelectorAll('.git-row'));
     if (!rows.length || !railCommits.length) return;
 
-    const EDGE = 13, DOT = 4.6;
+    const EDGE = 14, DOT = 5.2;
     let maxLane = 0;
     for (const c of railCommits) {
       for (const l of [c.lane, c.fromLane || 0, c.toLane || 0].concat(c.activeLanes || [])) {
@@ -1263,7 +1282,7 @@ export class GraphPanel {
     // third of the width and packs its lanes into that. Wide pipelines get
     // tighter lanes rather than a horizontal scrollbar.
     const budget = Math.max(40, Math.min(gitTreeList.clientWidth * 0.33, 190) - EDGE * 2);
-    const LANE_W = maxLane > 0 ? Math.max(7, Math.min(16, Math.floor(budget / maxLane))) : 16;
+    const LANE_W = maxLane > 0 ? Math.max(8, Math.min(18, Math.floor(budget / maxLane))) : 18;
     const gutter = EDGE * 2 + maxLane * LANE_W;
     gitTreeList.style.setProperty('--gutter', gutter + 'px');
 
@@ -1276,50 +1295,70 @@ export class GraphPanel {
 
     const line = (x, y1, y2, color, opacity) =>
       '<line x1="' + x + '" y1="' + y1 + '" x2="' + x + '" y2="' + y2 + '" stroke="' + color +
-      '" stroke-width="1.8" opacity="' + opacity + '" stroke-linecap="round"/>';
+      '" stroke-width="2.2" opacity="' + opacity + '" stroke-linecap="round"/>';
 
-    // An S-curve, so a branch leaves and rejoins the way a real graph draws it.
-    const curve = (x1, y1, x2, y2, color) => {
-      const my = (y1 + y2) / 2;
-      return '<path d="M' + x1 + ' ' + y1 + ' C' + x1 + ' ' + my + ',' + x2 + ' ' + my + ',' +
-        x2 + ' ' + y2 + '" fill="none" stroke="' + color + '" stroke-width="1.9" ' +
-        'stroke-linecap="round"/>';
+    /*
+     * A branch turns near its dot and runs straight the rest of the way.
+     *
+     * Stretching one S-curve across a whole row is what made this look limp:
+     * rows here are tall, so the bend was a lazy diagonal drifting across the
+     * gutter. Real graph tools bend tightly and travel straight, which is also
+     * what makes a lane readable as a lane. BEND caps how much of the row the
+     * turn is allowed to use.
+     */
+    const BEND = 26;
+    const curve = (x1, yFar, x2, yDot, color) => {
+      const dir = yFar > yDot ? 1 : -1;
+      const bend = Math.min(BEND, Math.abs(yFar - yDot));
+      const yTurn = yDot + dir * bend;
+      const c1 = yDot + dir * bend * 0.55;
+      return '<path d="M' + x1 + ' ' + yFar + ' L' + x1 + ' ' + yTurn +
+        ' C' + x1 + ' ' + c1 + ',' + x2 + ' ' + c1 + ',' + x2 + ' ' + yDot +
+        '" fill="none" stroke="' + color + '" stroke-width="2.2" ' +
+        'stroke-linecap="round" stroke-linejoin="round"/>';
     };
 
     let s = '';
     railCommits.forEach((c, i) => {
       const g = geo[i];
       if (!g) return;
-      // Rows run newest first, so the row above is later in time and the row
-      // below is earlier. A lane missing from one of them is a lane that ends
-      // here — which is what stops a rail short of the dot it belongs to
-      // instead of running the whole height of the list.
-      const above = i > 0 ? railCommits[i - 1].activeLanes || [0] : [];
-      const below = i < railCommits.length - 1 ? railCommits[i + 1].activeLanes || [0] : [];
       const lanes = (c.activeLanes && c.activeLanes.length ? c.activeLanes : [0]);
+      /*
+       * Rows run newest first, so the row above is later in time and the row
+       * below is earlier. Past either end of the list a lane is assumed to
+       * continue: treating the first and last rows as boundaries made every
+       * lane end there at once, so the oldest row sprouted a curve for each of
+       * them — a fan of lines into a row none of them belonged to. That is the
+       * lines-from-nowhere.
+       */
+      const above = i > 0 ? railCommits[i - 1].activeLanes || [0] : lanes;
+      const below = i < railCommits.length - 1 ? railCommits[i + 1].activeLanes || [0] : lanes;
 
       for (const lane of lanes) {
         const color = laneColor(lane);
-        const opacity = lane === c.lane ? 0.95 : 0.42;
         const isTrunk = lane === 0;
-        const newest = !isTrunk && above.indexOf(lane) === -1;
-        const oldest = !isTrunk && below.indexOf(lane) === -1;
+        const opacity = lane === c.lane || isTrunk ? 0.95 : 0.5;
+        // A lane may only begin or end on a row that is actually its own. Any
+        // other row it merely passes through, whatever the neighbours say.
+        const owns = lane === c.lane || (c.kind === 'merge' && lane === c.fromLane);
+        const newest = !isTrunk && owns && above.indexOf(lane) === -1;
+        const oldest = !isTrunk && owns && below.indexOf(lane) === -1;
 
         if (c.kind === 'merge' && lane === c.fromLane && lane !== c.lane) {
           // Folds into the trunk here, so it has no rail above this row.
-          s += curve(lx(lane), oldest ? g.mid : g.bottom, lx(c.lane), g.mid, color);
+          if (!oldest) {
+            s += line(lx(lane), g.mid + BEND, g.bottom, color, opacity);
+          }
+          s += curve(lx(lane), g.mid + BEND, lx(c.lane), g.mid, color);
         } else {
           const y1 = newest ? g.mid : g.top;
-          const y2 = oldest ? g.mid : g.bottom;
+          const y2 = oldest ? g.mid + BEND : g.bottom;
           if (y2 > y1) {
             s += line(lx(lane), y1, y2, color, opacity);
           }
         }
 
-        // Wherever a branch begins, it begins on the trunk. This covers agents
-        // whose own spawn event has aged out of the log as well as ordinary
-        // forks — a branch with no visible start is the thing that reads as a
-        // line coming out of nowhere.
+        // Wherever a branch begins, it begins on the trunk.
         if (oldest && !(c.kind === 'merge' && lane === c.fromLane)) {
           s += curve(lx(0), g.bottom, lx(lane), g.mid, color);
         }

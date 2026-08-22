@@ -11,6 +11,7 @@
  * spawns have been trimmed away.
  */
 import * as Module from 'module';
+import * as vm from 'vm';
 
 const loader = Module as unknown as { _load: (r: string, ...rest: unknown[]) => unknown };
 const original = loader._load;
@@ -39,7 +40,9 @@ interface Row {
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { GraphPanel } = require('./graphPanel') as {
-  GraphPanel: { prototype: { buildGitTree: (s: unknown[], h: unknown[]) => Row[] } };
+  GraphPanel: {
+    prototype: { buildGitTree: (s: unknown[], h: unknown[]) => Row[]; html: () => string };
+  };
 };
 
 let failures = 0;
@@ -174,6 +177,141 @@ const wide = rows(
 );
 const maxLane = Math.max(...wide.map((r) => Math.max(r.lane, ...(r.activeLanes || [0]))));
 ok('eight live branches need eight lanes, no more', maxLane === 8, `max lane ${maxLane}`);
+
+console.log('\nthe rail as drawn');
+
+/** Enough DOM for the graph script to boot and measure rows. */
+function drawnRail(commits: Record<string, unknown>[]): string {
+  const source = (() => {
+    const html = GraphPanel.prototype.html.call({} as never);
+    const open = html.indexOf('<script');
+    return html.slice(html.indexOf('>', open) + 1, html.indexOf('</script>', open));
+  })();
+
+  let overlayHtml = '';
+  const ROW_H = 90;
+
+  const makeEl = (id: string): Record<string, unknown> => {
+    const el: Record<string, unknown> = {
+      id,
+      innerHTML: '',
+      textContent: '',
+      clientWidth: 520,
+      scrollHeight: 0,
+      style: { setProperty: (): void => undefined },
+      classList: { add: () => undefined, remove: () => undefined, toggle: () => undefined },
+      addEventListener: () => undefined,
+      appendChild: (child: { outerKind?: string; innerHTML?: string }) => {
+        if (child && child.outerKind === 'svg') {
+          overlayHtml = String(child.innerHTML ?? '');
+        }
+      },
+      querySelector: () => null,
+      querySelectorAll: (sel: string) => {
+        if (sel === '.git-row') {
+          const n = String(el.innerHTML ?? '').split('class="git-row').length - 1;
+          return Array.from({ length: n }, (_, i) => ({
+            offsetTop: i * ROW_H,
+            offsetHeight: ROW_H,
+          }));
+        }
+        return [];
+      },
+    };
+    return el;
+  };
+
+  const nodes: Record<string, Record<string, unknown>> = {};
+  for (const id of [
+    'commit-count', 'd-body', 'd-close', 'd-title', 'dag-canvas', 'git-tree-list',
+    'git-tree-pane', 'hud', 'inspector-drawer', 'scope-btn', 'search', 'workflow-pane',
+  ]) {
+    nodes[id] = makeEl(id);
+  }
+
+  const listeners: ((e: { data: unknown }) => void)[] = [];
+  const sandbox = {
+    acquireVsCodeApi: () => ({ postMessage: () => undefined }),
+    document: {
+      getElementById: (id: string) => nodes[id] ?? makeEl(id),
+      createElementNS: () => ({
+        outerKind: 'svg',
+        innerHTML: '',
+        setAttribute: () => undefined,
+      }),
+      body: { style: { setProperty: (): void => undefined } },
+      addEventListener: () => undefined,
+    },
+    window: {
+      addEventListener: (type: string, fn: (e: { data: unknown }) => void) => {
+        if (type === 'message') {
+          listeners.push(fn);
+        }
+      },
+      removeEventListener: () => undefined,
+    },
+    setTimeout: () => 0,
+    console: { log: () => undefined, error: () => undefined },
+  };
+  vm.createContext(sandbox);
+  new vm.Script(source).runInContext(sandbox);
+
+  for (const fn of listeners) {
+    fn({
+      data: {
+        type: 'snapshot',
+        data: { nodes: [], edges: [], gitTree: commits, stats: null, showAllRuns: false },
+      },
+    });
+  }
+  return overlayHtml;
+}
+
+const rail = drawnRail(
+  GraphPanel.prototype.buildGitTree.call(
+    {},
+    ['core', 'email', 'phone'].map(session),
+    [
+      spawned('core', 1), done('core', 2), merged('core', 3),
+      spawned('email', 4), spawned('phone', 5),
+      done('email', 6), merged('email', 7),
+      done('phone', 8),
+    ].reverse()
+  ) as unknown as Record<string, unknown>[]
+);
+
+ok('something was drawn', rail.length > 0);
+
+/* Every curve has to land on a commit dot. A path ending in empty space is
+   precisely the "line coming out of nowhere" this graph kept producing. */
+const dots = [...rail.matchAll(/<circle cx="([-\d.]+)" cy="([-\d.]+)"/g)].map((m) => [
+  Number(m[1]),
+  Number(m[2]),
+]);
+const squares = [...rail.matchAll(/<rect x="([-\d.]+)" y="([-\d.]+)"/g)].map((m) => [
+  Number(m[1]) + 5.2,
+  Number(m[2]) + 5.2,
+]);
+const targets = [...dots, ...squares];
+const ends = [...rail.matchAll(/C[^"]*?,([-\d.]+) ([-\d.]+)"/g)].map((m) => [
+  Number(m[1]),
+  Number(m[2]),
+]);
+
+const near = (a: number[], b: number[]): boolean =>
+  Math.abs(a[0] - b[0]) < 0.6 && Math.abs(a[1] - b[1]) < 0.6;
+const orphans = ends.filter((e) => !targets.some((t) => near(e, t)));
+
+ok('curves exist at all', ends.length > 0, `${ends.length} curves, ${targets.length} dots`);
+ok(
+  'every curve ends on a dot',
+  orphans.length === 0,
+  `${orphans.length} of ${ends.length} land in empty space: ${JSON.stringify(orphans.slice(0, 4))}`
+);
+
+/* And nothing is drawn outside the list. */
+const ys = [...rail.matchAll(/y[12]?="([-\d.]+)"/g)].map((m) => Number(m[1]));
+ok('nothing is drawn above the first row', Math.min(...ys) >= -0.01, `min y ${Math.min(...ys)}`);
 
 console.log(failures === 0 ? `\nPASS — ${checks} checks\n` : `\n${failures} of ${checks} FAILED\n`);
 process.exit(failures === 0 ? 0 : 1);
