@@ -85,6 +85,8 @@ export interface PanelDeps {
   registry: SessionRegistry;
   /** The pipeline shapes on offer, so the empty panel can suggest one. */
   templates: () => { name: string; useWhen: string; agents: number }[];
+  /** Whether this machine can run anything, cached from the last check. */
+  setup: () => { name: string; ok: boolean; detail: string; fix?: string }[];
   worktrees: WorktreeManager;
   backend: AgentBackend;
   handleOf: (id: string) => BackendHandle | undefined;
@@ -123,6 +125,7 @@ export class WorkspacePanel {
 
   private readonly registry: SessionRegistry;
   private readonly templates: () => { name: string; useWhen: string; agents: number }[];
+  private readonly setup: () => { name: string; ok: boolean; detail: string; fix?: string }[];
   private readonly worktrees: WorktreeManager;
   private readonly backend: AgentBackend;
   private readonly handleOf: (id: string) => BackendHandle | undefined;
@@ -138,6 +141,7 @@ export class WorkspacePanel {
   ) {
     this.registry = deps.registry;
     this.templates = deps.templates;
+    this.setup = deps.setup;
     this.worktrees = deps.worktrees;
     this.backend = deps.backend;
     this.handleOf = deps.handleOf;
@@ -568,6 +572,8 @@ export class WorkspacePanel {
         archived: this.registry.all().length - live.length,
         plan: WorkspacePanel.activePlan,
         templates: this.templates(),
+        // Only the failures. A working machine should not be told it is working.
+        setup: this.setup().filter((c) => !c.ok),
       },
     });
   }
@@ -856,6 +862,10 @@ export class WorkspacePanel {
            padding: 2px 8px; }
   .scopy:hover { color: var(--running); border-color: var(--running); }
   .swhen { font-size: 11px; margin-top: 3px; line-height: 1.5; }
+  .broke { border: 1px solid var(--failed); border-left-width: 3px; border-radius: 8px;
+           padding: 8px 11px; background: color-mix(in srgb, var(--failed) 7%, var(--card)); }
+  .bname { font-weight: 600; color: var(--fg); font-size: 12.5px; }
+  .bfix { font-size: 11px; margin-top: 3px; line-height: 1.5; }
   .empty code { background: var(--vscode-textCodeBlock-background); padding: 1px 5px; border-radius: 3px; }
 </style>
 </head>
@@ -1197,9 +1207,22 @@ export class WorkspacePanel {
         '<div class="swhen">' + esc(t.useWhen) + '</div>' +
       '</div>').join('');
 
+    // Anything broken comes first. Offering pipeline shapes to someone whose
+    // OpenCode is not installed is an invitation to fail later for a reason
+    // they will not connect to this.
+    const broken = (d.setup || []).map(c =>
+      '<div class="broke">' +
+        '<div class="bname">' + esc(c.name) + '</div>' +
+        '<div class="bfix">' + esc(c.fix || c.detail) + '</div>' +
+      '</div>').join('');
+
     return '<div class="empty">' +
-      '<p>Nothing is running. Describe the work to your orchestrator and it will ' +
-      'propose a pipeline for you to approve \u2014 or start from one of these shapes.</p>' +
+      (broken
+        ? '<div class="shapes">' + broken + '</div>'
+        : '') +
+      '<p>' + (broken ? 'Fix those first. Then describe' : 'Nothing is running. Describe') +
+      ' the work to your orchestrator and it will propose a pipeline for you to ' +
+      'approve \u2014 or start from one of these shapes.</p>' +
       (shapes ? '<div class="shapes">' + shapes + '</div>' : '') +
       '</div>';
   }

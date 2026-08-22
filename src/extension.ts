@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { OpenCodeBackend } from './backends/opencodeBackend';
 import { DeliverableVerifier } from './core/deliverableVerifier';
+import { Check, checkSetup, summarise } from './core/doctor';
 import { EventLog } from './core/eventLog';
 import { Orchestrator } from './core/orchestrator';
 import { Planner } from './core/planner';
@@ -40,12 +41,38 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     {
       baseBranch: config.get<string>('baseBranch', 'main'),
       autoMerge: config.get<boolean>('autoMerge', false),
+      // Declared in package.json since the beginning and never actually read,
+      // so the cap could not fire however high the spend went.
+      globalBudgetCap: config.get<number>('globalBudgetCap', 0),
     },
     planner
   );
   // Before anything reads state: this window owns no terminals and no backend
   // handles, whatever the log says a previous window was doing.
   registry.reconcileForFreshWindow();
+
+  /*
+   * Whether this machine can run anything, cached.
+   *
+   * Every one of these has failed for a real user, always after a plan had been
+   * written and approved — and an agent that dies because OpenCode is not on
+   * the PATH looks exactly like an agent that dies because its task was
+   * impossible.
+   */
+  let setupChecks: Check[] = [];
+  const runSetupCheck = async (): Promise<Check[]> => {
+    setupChecks = await checkSetup({
+      isGitRepo: () => worktrees.isGitRepo(),
+      hasCommits: () => worktrees.hasCommits(),
+      baseBranch: config.get<string>('baseBranch', 'main'),
+      branchExists: (name) => worktrees.branchExists(name),
+      backendInstalled: () => backend.isAvailable(),
+      backendName: backend.displayName,
+      modelCount: () => orchestrator.refreshModels(),
+    });
+    WorkspacePanel.refreshIfOpen();
+    return setupChecks;
+  };
 
   const decidePlan = (id: string, decision: 'approved' | 'rejected', feedback?: string): void => {
     // Whoever proposed the plan normally runs it on approval. But a plan
@@ -72,6 +99,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     ...WorkspacePanel.bind({
       registry,
+      setup: () => setupChecks,
       templates: () =>
         new TemplateLibrary(orchyDir).all().map((t) => ({
           name: t.name,
@@ -124,9 +152,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // What the backend can run, learned once at startup and again whenever a
   // plan is about to be resolved. A window left open for a day should not be
   // choosing models from yesterday's catalogue.
-  void orchestrator.refreshModels().then((count) => {
-    if (count > 0) {
-      output.appendLine(`${count} model(s) available for agents.`);
+  void runSetupCheck().then((checks) => {
+    for (const check of checks) {
+      output.appendLine(`${check.ok ? 'ok  ' : 'BAD '} ${check.name} — ${check.detail}`);
+    }
+    const trouble = summarise(checks);
+    if (trouble) {
+      // Said once, in the panel and the log, rather than as a modal. The panel
+      // is where someone with nothing running is already looking.
+      output.appendLine(`Orchy: ${trouble}`);
+      WorkspacePanel.show();
     }
   });
 
@@ -364,6 +399,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Worktree may already be gone; removal from the list still proceeds.
       }
       registry.record({ type: 'purged', session: target });
+      orchestrator.settleQueue();
     }),
 
     vscode.commands.registerCommand('orchy.purgeAll', async () => {
@@ -389,6 +425,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           // Best effort — clearing the list must not be blockable by a stuck worktree.
         }
         registry.record({ type: 'purged', session: session.id });
+        orchestrator.settleQueue();
       }
     }),
 
@@ -516,6 +553,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Reachable from the panel as command: URIs, so a plan can be decided even
     // when the webview's script never started. The buttons post messages when
     // the script is alive; these are the same decision by another road.
+    vscode.commands.registerCommand('orchy.checkSetup', async () => {
+      const checks = await runSetupCheck();
+      const trouble = summarise(checks);
+      await vscode.window.showInformationMessage(
+        trouble ?? 'Orchy is ready: repository, backend and models all check out.',
+        ...(trouble ? ['Show the panel'] : [])
+      ).then((choice) => {
+        if (choice) {
+          WorkspacePanel.show();
+        }
+      });
+    }),
+
     vscode.commands.registerCommand('orchy.approvePlan', (id: string) => {
       decidePlan(id, 'approved');
       WorkspacePanel.clearPlan(id);

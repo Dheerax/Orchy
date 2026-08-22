@@ -75,6 +75,21 @@ export class WorktreeManager {
     }
   }
 
+  /**
+   * Whether there is anything to branch from.
+   *
+   * A fresh repository with no commits fails worktree creation with a git error
+   * several steps removed from the cause, so it is worth asking directly.
+   */
+  hasCommits(): boolean {
+    try {
+      this.git(['rev-parse', '--verify', 'HEAD']);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   hasRemote(): boolean {
     try {
       return this.git(['remote']).length > 0;

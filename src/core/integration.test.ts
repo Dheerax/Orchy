@@ -331,6 +331,82 @@ void (async (): Promise<void> => {
     (registry.get(orphan.id)?.lastError ?? '').includes(doomed.id)
   );
 
+  console.log('\nand nothing else has to happen for it to notice');
+
+  /*
+   * The real shape of this failure: a dependency is archived, and no other
+   * session is going to complete afterwards. The queue used to be re-examined
+   * only when something verified, so there was nothing left to do the noticing
+   * — four agents once sat queued on a purged one indefinitely, reporting
+   * "queued" as though they were about to start.
+   */
+  const abandoned = await orchestrator.spawn({
+    role: 'abandoned',
+    task: 'x',
+    deliverables: [{ kind: 'file', spec: 'ABANDONED.md', verified: false }],
+  });
+  const waiting = await orchestrator.spawn({
+    role: 'waiting',
+    task: 'y',
+    deliverables: [],
+    dependsOn: [abandoned.id],
+  });
+  check('the dependent is queued', registry.get(waiting.id)?.status, 'queued');
+
+  await orchestrator.archive(abandoned.id, { force: true });
+  await new Promise((r) => setTimeout(r, 150));
+
+  check(
+    'archiving its dependency fails it on the spot',
+    registry.get(waiting.id)?.status,
+    'failed'
+  );
+  ok(
+    'naming what it was waiting for',
+    (registry.get(waiting.id)?.lastError ?? '').includes(abandoned.id)
+  );
+
+  console.log('\nbudget caps');
+
+  /*
+   * The cap ships defaulting to 0 meaning "no cap", so the comparison has to
+   * treat zero as off. Written naively it becomes the strictest cap there is
+   * and stops every session before it has spent anything.
+   */
+  const uncapped = await orchestrator.spawn({
+    role: 'uncapped',
+    task: 'x',
+    deliverables: [],
+  });
+  backend.emit(uncapped.id, { kind: 'budget', tokensUsed: 90000, costEstimate: 12 });
+  await new Promise((r) => setTimeout(r, 120));
+  ok(
+    'a cap of zero does not stop anything',
+    registry.get(uncapped.id)?.status !== 'waiting_input'
+  );
+
+  const capped = await orchestrator.spawn({
+    role: 'capped',
+    task: 'x',
+    deliverables: [],
+    budgetCap: 0.5,
+  });
+  backend.emit(capped.id, { kind: 'budget', tokensUsed: 1000, costEstimate: 0.2 });
+  await new Promise((r) => setTimeout(r, 120));
+  check('under the cap it keeps going', registry.get(capped.id)?.status, 'running');
+
+  backend.emit(capped.id, { kind: 'budget', tokensUsed: 40000, costEstimate: 0.91 });
+  await new Promise((r) => setTimeout(r, 200));
+  check('over it the session stops for a human', registry.get(capped.id)?.status, 'waiting_input');
+  ok(
+    'and the reason says what was spent and what to do',
+    (registry.get(capped.id)?.lastError ?? '').includes('0.91') &&
+      (registry.get(capped.id)?.lastError ?? '').includes('cap')
+  );
+
+  // Stopping is not killing: the work so far is still there to verify or merge.
+  ok('the worktree survives being capped', fs.existsSync(capped.worktree!.path));
+
   console.log('\nmerge gating');
 
   let mergeRefused = '';

@@ -363,6 +363,9 @@ export class Orchestrator extends EventEmitter {
       status: 'failed',
       error: lastError instanceof Error ? lastError.message : String(lastError),
     });
+    // Whatever was waiting on this will now never start; say so rather than
+    // leaving it queued.
+    this.settleQueue();
   }
 
   /** Drop a half-attached handle so the next attempt starts clean. */
@@ -425,11 +428,31 @@ export class Orchestrator extends EventEmitter {
     return ids.every((d) => this.registry.get(d)?.status === 'complete');
   }
 
+  /**
+   * Re-examine the queue after something ended.
+   *
+   * This used to run only when a session verified complete, which meant a
+   * dependency that was archived, purged or failed went unnoticed: nothing
+   * else was going to complete, so nothing else was going to look. Four agents
+   * sat queued on a purged one indefinitely, showing "queued" as though they
+   * were about to start.
+   *
+   * Anything that ends a session has to settle the queue, including the ways a
+   * session ends badly.
+   */
+  settleQueue(): void {
+    void this.releaseReady();
+  }
+
   /** A dependency that can never complete should not leave dependents waiting forever. */
   private deadDependency(ids: string[]): string | undefined {
     return ids.find((d) => {
-      const status = this.registry.get(d)?.status;
-      return status === 'failed' || status === 'archived' || status === undefined;
+      const session = this.registry.get(d);
+      // A purge removes the session outright, so `undefined` is not a missing
+      // lookup here — it is a dependency that no longer exists at all.
+      return (
+        !session || session.status === 'failed' || session.status === 'archived'
+      );
     });
   }
 
@@ -606,15 +629,29 @@ export class Orchestrator extends EventEmitter {
       return;
     }
     const cap = sessionCap ?? session.budget.cap ?? this.config.globalBudgetCap;
-    if (cap === undefined || session.budget.costEstimate < cap) {
+    /*
+     * Zero is off.
+     *
+     * The setting ships as 0 meaning "no cap", and a naive `costEstimate < cap`
+     * makes that the strictest cap possible — every session trips it before
+     * spending anything. A cap has to be a positive number to be a cap.
+     */
+    if (cap === undefined || cap <= 0 || session.budget.costEstimate < cap) {
       return;
+    }
+    if (session.status === 'waiting_input' || session.status === 'complete') {
+      return; // Already stopped for this; do not keep re-interrupting it.
     }
     void this.interrupt(id, 'budget exhausted');
     this.registry.record({
       type: 'status',
       session: id,
       status: 'waiting_input',
-      error: `Budget cap of ${cap} reached (spent ${session.budget.costEstimate.toFixed(2)}). Raise the cap or kill the session.`,
+      error:
+        `Stopped at a budget cap of $${cap.toFixed(2)} — ` +
+        `$${session.budget.costEstimate.toFixed(2)} spent over ` +
+        `${session.budget.tokensUsed.toLocaleString()} tokens. ` +
+        `Raise orchy.globalBudgetCap, or verify and merge what it has done.`,
     });
   }
 
@@ -906,6 +943,7 @@ export class Orchestrator extends EventEmitter {
       this.worktrees.remove(session.worktree.path, opts);
     }
     this.registry.record({ type: 'archived', session: id });
+    this.settleQueue();
   }
 
   /** Merge a verified session's branch into the base branch. */
