@@ -159,6 +159,10 @@ export class GraphPanel {
             this.registry.rebuild();
             this.push();
             break;
+          case 'toggleScope':
+            this.showAllRuns = !this.showAllRuns;
+            this.push();
+            break;
           case 'diff':
             if (msg.id && msg.file) {
               await this.openDiff(msg.id, msg.file);
@@ -338,34 +342,64 @@ export class GraphPanel {
      * This walks forwards in time; `history` arrives newest first, so it is
      * reversed here and the result is looked up by sequence number below.
      */
+    const chronological = [...history].reverse();
+    const firstSeq = new Map<string, number>();
+    const closedAt = new Map<string, number>();
+    for (const event of chronological) {
+      if (!firstSeq.has(event.session)) {
+        firstSeq.set(event.session, event.seq);
+      }
+      if (event.type === 'merged' || event.type === 'archived' || event.type === 'purged') {
+        closedAt.set(event.session, event.seq);
+      }
+    }
+    // A branch that has simply gone quiet is not a branch that has ended: it
+    // still exists, unmerged, and its rail should reach the top of the list.
+    // Only merging or removing it closes the lane.
+    const newestSeq = chronological.length ? chronological[chronological.length - 1].seq : 0;
+    const lastSeq = new Map<string, number>(
+      [...firstSeq.keys()].map((id) => [id, closedAt.get(id) ?? newestSeq])
+    );
+
+    /*
+     * A lane is occupied for exactly as long as its branch has events, and no
+     * longer.
+     *
+     * Releasing lanes only on merge was not enough: most agents end without
+     * merging — they fail, or they finish and sit there — so their lanes were
+     * held forever and every later row drew them. That is what filled the
+     * gutter with vertical lines running the full height past everything,
+     * attached to nothing at either end.
+     *
+     * With the span known up front this is ordinary interval packing: take the
+     * lowest lane whose previous occupant has already finished.
+     */
+    const laneOfSession = new Map<string, number>();
+    const laneFreeAfter: number[] = [];
+    const byStart = [...firstSeq.keys()].sort(
+      (x, y) => (firstSeq.get(x) ?? 0) - (firstSeq.get(y) ?? 0)
+    );
+    for (const id of byStart) {
+      const start = firstSeq.get(id) ?? 0;
+      let lane = 1;
+      while (laneFreeAfter[lane] !== undefined && (laneFreeAfter[lane] ?? 0) >= start) {
+        lane++;
+      }
+      laneFreeAfter[lane] = lastSeq.get(id) ?? start;
+      laneOfSession.set(id, lane);
+    }
+
     const laneBySeq = new Map<number, number>();
     const activeBySeq = new Map<number, number[]>();
-    const laneOfSession = new Map<string, number>();
-    const held = new Set<number>();
-
-    for (const event of [...history].reverse()) {
-      // On first sight, not only on `spawned`. The log is trimmed, so an older
-      // agent's spawn may have fallen off the end — and keying off it meant
-      // that agent had no lane, so its work and its merge were drawn on main
-      // itself: a merge arriving from nowhere, into the trunk it was already
-      // on. A branch we join late is still a branch.
-      if (!laneOfSession.has(event.session)) {
-        let lane = 1;
-        while (held.has(lane)) {
-          lane++;
+    for (const event of chronological) {
+      laneBySeq.set(event.seq, laneOfSession.get(event.session) ?? 0);
+      const live = [0];
+      for (const [id, lane] of laneOfSession) {
+        if ((firstSeq.get(id) ?? 0) <= event.seq && event.seq <= (lastSeq.get(id) ?? 0)) {
+          live.push(lane);
         }
-        laneOfSession.set(event.session, lane);
-        held.add(lane);
       }
-      const lane = laneOfSession.get(event.session) ?? 0;
-      laneBySeq.set(event.seq, lane);
-      // Snapshot before releasing: a merge row still has to draw the lane its
-      // curve comes from.
-      activeBySeq.set(event.seq, [0, ...held]);
-      if (event.type === 'merged' || event.type === 'archived' || event.type === 'purged') {
-        held.delete(lane);
-        laneOfSession.delete(event.session);
-      }
+      activeBySeq.set(event.seq, live);
     }
 
     const getLaneForSession = (sessionId: string): { lane: number; color: string } => {
@@ -510,11 +544,39 @@ export class GraphPanel {
     return commits.slice(0, 100);
   }
 
+  /** Show every agent this workspace has ever had, rather than the current run. */
+  private showAllRuns = false;
+
+  /**
+   * The agents belonging to the run in progress.
+   *
+   * A workspace accumulates: three abandoned attempts, a merged pipeline from
+   * last week, and the five agents you just started, all drawn on one canvas.
+   * The shape of what is happening now is the whole point of this view, and it
+   * cannot survive being mixed with the shape of what happened before.
+   *
+   * The run is the newest plan. Agents spawned by hand after it started count
+   * as part of it — they were started while looking at it.
+   */
+  private currentRun(sessions: Session[]): Session[] {
+    const planned = sessions.filter((s) => s.planId);
+    if (planned.length === 0) {
+      return sessions;
+    }
+    const newest = planned.reduce((a, b) => (a.createdAt >= b.createdAt ? a : b));
+    const run = planned.filter((s) => s.planId === newest.planId);
+    const startedAt = run.reduce((a, b) => (a.createdAt <= b.createdAt ? a : b)).createdAt;
+    const strays = sessions.filter((s) => !s.planId && s.createdAt >= startedAt);
+    return [...run, ...strays].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
   private push(): void {
     if (!this.panel.visible) {
       return;
     }
-    const sessions = this.registry.all();
+    const everything = this.registry.all();
+    const sessions = this.showAllRuns ? everything : this.currentRun(everything);
+    const inScope = new Set(sessions.map((s) => s.id));
     const nodes = this.layout(sessions);
     const known = new Set(sessions.map((s) => s.id));
 
@@ -527,7 +589,9 @@ export class GraphPanel {
       }
     }
 
-    const history = this.registry.history(300);
+    // The timeline follows the same scope: a rail for an agent that is not on
+    // the canvas is a line with nothing at either end of it.
+    const history = this.registry.history(300).filter((e) => inScope.has(e.session));
     const merged = new Set<string>();
     for (const event of history) {
       if (event.type === 'merged') {
@@ -569,6 +633,9 @@ export class GraphPanel {
         edges,
         gitTree,
         stats,
+        showAllRuns: this.showAllRuns,
+        runSize: sessions.length,
+        totalSize: everything.length,
       },
     });
   }
@@ -883,6 +950,7 @@ export class GraphPanel {
     <input type="text" id="search" class="search-box" placeholder="Filter agents, roles, branches...">
     <button class="tbtn primary" data-act="spawn">+ Spawn</button>
     <button class="tbtn" data-act="setupLayout">⊞ Grid</button>
+    <button class="tbtn" id="scope-btn" data-act="toggleScope" title="Show only the pipeline you are running, or everything this workspace has ever run">This run</button>
     <button class="tbtn" data-act="cleanupTerminals">🧹 Terminals</button>
     <button class="tbtn" data-act="refresh">⟳</button>
   </div>
@@ -939,6 +1007,7 @@ export class GraphPanel {
   const hud = document.getElementById('hud');
   const dagCanvas = document.getElementById('dag-canvas');
   const gitTreeList = document.getElementById('git-tree-list');
+  const scopeBtn = document.getElementById('scope-btn');
   const commitCount = document.getElementById('commit-count');
   const searchInput = document.getElementById('search');
   const drawer = document.getElementById('inspector-drawer');
@@ -967,12 +1036,21 @@ export class GraphPanel {
       state.nodes = e.data.data.nodes || [];
       state.edges = e.data.data.edges || [];
       state.gitTree = e.data.data.gitTree || [];
+      state.showAllRuns = !!e.data.data.showAllRuns;
+      state.runSize = e.data.data.runSize || 0;
+      state.totalSize = e.data.data.totalSize || 0;
       state.stats = e.data.data.stats || {};
       render();
     }
   });
 
   function render() {
+    if (scopeBtn) {
+      scopeBtn.textContent = state.showAllRuns
+        ? 'All runs · ' + (state.totalSize || 0)
+        : 'This run · ' + (state.runSize || 0);
+      scopeBtn.classList.toggle('primary', !state.showAllRuns);
+    }
     renderHud();
     renderWorkflow();
     renderGitTree();
@@ -1212,20 +1290,38 @@ export class GraphPanel {
     railCommits.forEach((c, i) => {
       const g = geo[i];
       if (!g) return;
+      // Rows run newest first, so the row above is later in time and the row
+      // below is earlier. A lane missing from one of them is a lane that ends
+      // here — which is what stops a rail short of the dot it belongs to
+      // instead of running the whole height of the list.
+      const above = i > 0 ? railCommits[i - 1].activeLanes || [0] : [];
+      const below = i < railCommits.length - 1 ? railCommits[i + 1].activeLanes || [0] : [];
       const lanes = (c.activeLanes && c.activeLanes.length ? c.activeLanes : [0]);
+
       for (const lane of lanes) {
         const color = laneColor(lane);
-        const opacity = lane === c.lane ? 0.95 : 0.45;
-        if (c.kind === 'fork' && lane === c.lane && lane !== 0) {
-          // The branch starts at this dot and runs up; below it, it curves back
-          // to the lane it was cut from.
-          s += line(lx(lane), g.top, g.mid, color, opacity);
-          s += curve(lx(c.fromLane || 0), g.bottom, lx(lane), g.mid, color);
-        } else if (c.kind === 'merge' && lane === c.fromLane && lane !== c.lane) {
-          // The branch arrives from below and folds into the target lane.
-          s += curve(lx(lane), g.bottom, lx(c.lane), g.mid, laneColor(lane));
+        const opacity = lane === c.lane ? 0.95 : 0.42;
+        const isTrunk = lane === 0;
+        const newest = !isTrunk && above.indexOf(lane) === -1;
+        const oldest = !isTrunk && below.indexOf(lane) === -1;
+
+        if (c.kind === 'merge' && lane === c.fromLane && lane !== c.lane) {
+          // Folds into the trunk here, so it has no rail above this row.
+          s += curve(lx(lane), oldest ? g.mid : g.bottom, lx(c.lane), g.mid, color);
         } else {
-          s += line(lx(lane), g.top, g.bottom, color, opacity);
+          const y1 = newest ? g.mid : g.top;
+          const y2 = oldest ? g.mid : g.bottom;
+          if (y2 > y1) {
+            s += line(lx(lane), y1, y2, color, opacity);
+          }
+        }
+
+        // Wherever a branch begins, it begins on the trunk. This covers agents
+        // whose own spawn event has aged out of the log as well as ordinary
+        // forks — a branch with no visible start is the thing that reads as a
+        // line coming out of nowhere.
+        if (oldest && !(c.kind === 'merge' && lane === c.fromLane)) {
+          s += curve(lx(0), g.bottom, lx(lane), g.mid, color);
         }
       }
 

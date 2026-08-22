@@ -118,6 +118,14 @@ export interface Session {
     model?: string;
   };
   worktree?: WorktreeRef;
+  /**
+   * The plan this agent was spawned by.
+   *
+   * Without it every surface shows every agent that ever ran in this workspace,
+   * so starting a pipeline means reading it out of the wreckage of the last
+   * three. A run is the unit people actually think in.
+   */
+  planId?: string;
   /** Sessions that must complete, and be merged in, before this one starts. */
   dependsOn: string[];
   agreement: AgentContract;
@@ -208,6 +216,8 @@ export type OrchyEvent =
       contract?: Contract;
       dependsOn?: string[];
       agreement?: AgentContract;
+      /** The plan that spawned this agent, if it came from one. */
+      planId?: string;
     })
   | (EventBase & { type: 'status'; status: SessionStatus; error?: string })
   | (EventBase & { type: 'tool'; name: string; target?: string })

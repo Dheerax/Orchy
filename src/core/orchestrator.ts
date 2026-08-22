@@ -24,6 +24,8 @@ export interface SpawnRequest {
   dependsOn?: string[];
   /** What this agent promises to produce, and what it expects to exist. */
   agreement?: AgentContract;
+  /** The plan this agent belongs to, so a run can be shown on its own. */
+  planId?: string;
   /** Free-text label used for the id and grouping. Not sent to the backend. */
   role: string;
   /**
@@ -191,6 +193,7 @@ export class Orchestrator extends EventEmitter {
       contract: { forbiddenCommands: [...DEFAULT_FORBIDDEN_COMMANDS] },
       dependsOn,
       agreement: req.agreement ?? { provides: [], needs: [] },
+      planId: req.planId,
     });
 
     if (dependsOn.length > 0 && !this.dependenciesMet(dependsOn)) {
@@ -261,6 +264,7 @@ export class Orchestrator extends EventEmitter {
     for (const index of order) {
       const agent: PlannedAgent = plan.agents[index];
       const session = await this.spawn({
+        planId: plan.id,
         role: agent.role,
         task: agent.task,
         deliverables: agent.deliverables,

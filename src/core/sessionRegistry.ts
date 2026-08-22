@@ -125,6 +125,7 @@ export class SessionRegistry extends EventEmitter {
         role: event.role,
         task: event.task,
         status: (event.dependsOn ?? []).length > 0 ? 'queued' : 'spawning',
+        planId: event.planId,
         backend: event.backend,
         worktree: event.worktree,
         dependsOn: event.dependsOn ?? [],
