@@ -886,14 +886,18 @@ export class GraphPanel {
   .tbtn.primary { background: color-mix(in srgb, var(--running) 20%, var(--bg)); border-color: var(--running); }
 
   /* Main Workspace Area */
+  /* Stacked, not side by side. The pipeline diagram is wide and shallow and
+     the history is a timeline, so splitting the width gave each of them the
+     one dimension it did not need. */
   #main-content {
-    flex: 1 1 auto; display: flex; min-height: 0; position: relative;
+    flex: 1 1 auto; display: flex; flex-direction: column;
+    min-height: 0; position: relative;
   }
 
   /* Left Pane: Workflow DAG */
   #workflow-pane {
-    flex: 1 1 50%; display: flex; flex-direction: column;
-    min-width: 320px; border-right: 1px solid var(--line);
+    flex: 1 1 46%; display: flex; flex-direction: column;
+    min-height: 140px; border-bottom: 1px solid var(--line);
     position: relative; overflow: hidden;
   }
   .pane-header {
@@ -967,38 +971,31 @@ export class GraphPanel {
 
   /* Right Pane: GitHub-Style Git Tree Timeline */
   #git-tree-pane {
-    flex: 1 1 50%; display: flex; flex-direction: column;
-    min-width: 340px; background: var(--bg); overflow: hidden;
+    flex: 1 1 54%; display: flex; flex-direction: column;
+    min-height: 150px; background: var(--bg); overflow: hidden;
   }
-  /* The rail is one continuous drawing behind every row, the way a commit
-     graph works. Rows used to be separate cards each with its own little SVG,
-     so every lane was chopped into disconnected stubs with gaps between them —
-     a branch you could not actually follow with your eye. */
-  #git-tree-list {
-    flex: 1 1 auto; overflow-y: auto; padding: 4px 14px 24px 0;
-    position: relative; --gutter: 64px;
+  /* Time runs left to right and lanes stack downwards, which is the shape a
+     branching diagram is normally drawn in — and the shape that fits a pane
+     that is wide and short. */
+  #git-graph {
+    flex: 1 1 auto; overflow: auto; position: relative; padding: 2px 0 0 0;
   }
-  .git-rail-overlay {
-    position: absolute; left: 0; top: 0; width: var(--gutter);
-    pointer-events: none; overflow: visible;
+  #git-graph svg { display: block; }
+  #git-graph .lane-label {
+    font-size: 9.5px; font-family: var(--mono); fill: var(--muted);
   }
+  #git-graph .node { cursor: pointer; }
+  #git-graph .node:hover circle, #git-graph .node:hover rect { stroke: var(--fg); }
+  #git-graph .tick { font-size: 8.5px; fill: var(--muted); opacity: .75; }
 
-  /* Every row the same height, like a commit log. Rows that grew to fit their
-     own contents put every dot at a different spacing, which is the difference
-     between a graph and a scatter of circles. The detail is one click away. */
-  .git-row {
-    display: flex; gap: 10px; align-items: flex-start;
-    padding: 6px 8px 6px 0; cursor: pointer; position: relative;
-    border-left: 2px solid transparent;
-    height: 52px; overflow: hidden;
+  /* One commit's detail, for the one you picked. Forty rows of it was what
+     made the old list taller than the graph it was meant to annotate. */
+  .git-detail-bar {
+    flex: 0 0 auto; border-top: 1px solid var(--line); background: var(--card);
+    padding: 7px 12px; display: flex; flex-direction: column; gap: 4px;
+    min-height: 34px;
   }
-  .git-row.selected { height: auto; overflow: visible; }
-  .git-row:hover { background: var(--hover-bg); }
-  .git-row.selected { background: color-mix(in srgb, var(--running) 10%, transparent);
-                      border-left-color: var(--running); }
-
-  /* Space the rail draws into. The width follows how many lanes are alive. */
-  .git-rail { flex: 0 0 var(--gutter); }
+  .git-detail-bar .empty-hint { color: var(--muted); font-size: 11px; }
 
   .git-content { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .git-top { display: flex; align-items: center; gap: 8px; font-size: 11px; }
@@ -1147,13 +1144,14 @@ export class GraphPanel {
     </div>
   </section>
 
-  <!-- Right: GitHub-Style Git Tree Timeline -->
+  <!-- Below: the branch timeline, running left to right -->
   <section id="git-tree-pane">
     <div class="pane-header">
       <span>Git Branch & Commit Tree</span>
       <span id="commit-count" style="font-weight:400; opacity:.8;">0 events</span>
     </div>
-    <div id="git-tree-list"></div>
+    <div id="git-graph"></div>
+    <div class="git-detail-bar" id="git-detail"></div>
   </section>
 
   <!-- Deep Dive Inspector Drawer -->
@@ -1173,7 +1171,8 @@ export class GraphPanel {
   const api = acquireVsCodeApi();
   const hud = document.getElementById('hud');
   const dagCanvas = document.getElementById('dag-canvas');
-  const gitTreeList = document.getElementById('git-tree-list');
+  const gitGraph = document.getElementById('git-graph');
+  const gitDetail = document.getElementById('git-detail');
   const scopeBtn = document.getElementById('scope-btn');
   const commitCount = document.getElementById('commit-count');
   const searchInput = document.getElementById('search');
@@ -1345,219 +1344,193 @@ export class GraphPanel {
     dagCanvas.innerHTML = svg + '</svg>';
   }
 
-  function renderGitTree() {
-    const filter = state.filter.toLowerCase();
-    const visibleCommits = state.gitTree.filter(c =>
-      !filter || c.sessionId.toLowerCase().includes(filter) || c.branch.toLowerCase().includes(filter) || c.title.toLowerCase().includes(filter) || (c.detail && c.detail.toLowerCase().includes(filter))
-    );
-
-    commitCount.textContent = visibleCommits.length + ' event' + (visibleCommits.length === 1 ? '' : 's');
-
-    if (!visibleCommits.length) {
-      gitTreeList.innerHTML = '<div class="empty-state">No git branch events recorded yet.</div>';
-      return;
-    }
-
-    let html = '';
-    for (const c of visibleCommits) {
-      const isSelected = state.selectedNodeId === c.sessionId;
-
-      const delivChips = (c.deliverables || []).map(d =>
-        '<span class="deliv-chip ' + (d.verified ? 'v-yes' : 'v-no') + '">' +
-        (d.verified ? '✓ ' : '⚠ ') + esc(d.spec) + '</span>'
-      ).join('');
-
-      html += '<div class="git-row ' + (isSelected ? 'selected' : '') + '" data-id="' + esc(c.sessionId) + '">' +
-        '<div class="git-rail"></div>' +
-        '<div class="git-content">' +
-          '<div class="git-top">' +
-            '<span class="git-branch-badge" style="color:' + esc(c.color) + '; border-color:color-mix(in srgb,' + esc(c.color) + ' 40%, var(--line));">' + esc(c.branch) + '</span>' +
-            '<span class="git-badge ' + esc(c.status) + '">' + esc(c.status.replace('_', ' ')) + '</span>' +
-            '<span class="git-time" title="' + esc(c.time) + '">' + esc(c.relativeTime) + '</span>' +
-          '</div>' +
-          '<div class="git-title">' + esc(c.title) + '</div>' +
-          (c.detail ? '<div class="git-detail">' + esc(c.detail) + '</div>' : '') +
-          (delivChips ? '<div class="git-chips">' + delivChips + '</div>' : '') +
-          '<div class="git-actions">' +
-            '<button class="prim" data-act="openTerminal" data-id="' + esc(c.sessionId) + '">&gt;_ Terminal</button>' +
-            '<button data-act="inspect" data-id="' + esc(c.sessionId) + '">🔍 Details</button>' +
-            '<button data-act="verify" data-id="' + esc(c.sessionId) + '">✓ Verify</button>' +
-            '<button data-act="merge" data-id="' + esc(c.sessionId) + '">⑂ Merge</button>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
-    }
-
-    gitTreeList.innerHTML = html;
-    railCommits = visibleCommits;
-    drawRail();
-  }
-
-  /* Lane palette, mirrored from the extension so lanes other than the one a
-     row belongs to can still be drawn in their own colour. */
+  /* Lane palette, mirrored from the extension so a lane can be drawn in its own
+     colour whichever commit is being asked about. */
   const LANE_COLORS = ['#bc8cff', '#58a6ff', '#3fb950', '#f0883e', '#39c5cf',
                        '#e3b341', '#f778ba', '#7ee787', '#d2a8ff', '#ffa657'];
   const laneColor = l => LANE_COLORS[l % LANE_COLORS.length];
 
-  let railCommits = [];
-
   /**
-   * Draw every lane as one figure across the whole list.
+   * The branch timeline, running left to right.
    *
-   * Row heights vary — deliverable chips, an error line, the action row — so
-   * the geometry cannot be assumed. It is measured after the rows are in the
-   * DOM, which is also what lets a merge curve start at the row below it
-   * rather than stopping at an invisible box edge.
+   * Time along the x axis and lanes stacked down the y axis: main across the
+   * top, each agent's branch on its own row below, forking away where it was
+   * created and folding back where it merged. That is how a branching diagram
+   * is normally drawn, and unlike the vertical list it fits a pane that is
+   * wide and short instead of fighting it.
    *
-   * History runs newest first, so time runs *up* the list: a branch is created
-   * at the bottom of its lane and merges back at the top.
+   * A lane is one continuous line across the columns it is alive for, so the
+   * geometry cannot produce a segment that belongs to nothing — the failure
+   * that dogged the vertical rail, where every row drew its own idea of which
+   * lanes existed.
    */
-  function drawRail() {
-    const existing = gitTreeList.querySelector('.git-rail-overlay');
-    if (existing) existing.remove();
+  function renderGitTree() {
+    const filter = state.filter.toLowerCase();
+    const matching = state.gitTree.filter(c =>
+      !filter || c.sessionId.toLowerCase().includes(filter) ||
+      c.branch.toLowerCase().includes(filter) || c.title.toLowerCase().includes(filter) ||
+      (c.detail && c.detail.toLowerCase().includes(filter))
+    );
 
-    const rows = Array.from(gitTreeList.querySelectorAll('.git-row'));
-    if (!rows.length || !railCommits.length) return;
+    commitCount.textContent = matching.length + ' event' + (matching.length === 1 ? '' : 's');
 
-    const EDGE = 14, DOT = 5.2;
+    if (!matching.length) {
+      gitGraph.innerHTML = '<div class="empty-state">No git branch events recorded yet.</div>';
+      gitDetail.innerHTML = '<span class="empty-hint">Nothing has happened in this run yet.</span>';
+      return;
+    }
+
+    // The panel hands these over newest first; a timeline reads the other way.
+    const cols = matching.slice().reverse();
+
+    const COL = 46, LANE_H = 34, PADX = 92, PADY = 24, DOT = 5.2, BEND = 20;
     let maxLane = 0;
-    for (const c of railCommits) {
-      for (const l of [c.lane, c.fromLane || 0, c.toLane || 0].concat(c.activeLanes || [])) {
+    for (const c of cols) {
+      for (const l of (c.activeLanes || [0])) {
         if (l > maxLane) maxLane = l;
       }
+      if (c.lane > maxLane) maxLane = c.lane;
     }
-    // The rail never pushes the text sideways off the pane: it gets at most a
-    // third of the width and packs its lanes into that. Wide pipelines get
-    // tighter lanes rather than a horizontal scrollbar.
-    const budget = Math.max(40, Math.min(gitTreeList.clientWidth * 0.33, 190) - EDGE * 2);
-    const LANE_W = maxLane > 0 ? Math.max(8, Math.min(18, Math.floor(budget / maxLane))) : 18;
-    const gutter = EDGE * 2 + maxLane * LANE_W;
-    gitTreeList.style.setProperty('--gutter', gutter + 'px');
 
-    const lx = l => EDGE + l * LANE_W;
-    /*
-     * The dot belongs to the row's first line, not to the middle of however
-     * tall the row happens to be. Anchoring to the middle meant one expanded
-     * row pushed its dot out of line with every other, and a graph whose dots
-     * do not line up does not read as a graph at all.
-     */
-    const ANCHOR = 26;
-    const geo = rows.map(r => ({
-      top: r.offsetTop,
-      bottom: r.offsetTop + r.offsetHeight,
-      mid: Math.min(r.offsetTop + r.offsetHeight / 2, r.offsetTop + ANCHOR),
-    }));
+    const W = PADX + cols.length * COL + 28;
+    const H = PADY * 2 + maxLane * LANE_H + 10;
+    const cx = i => PADX + i * COL;
+    const cy = l => PADY + l * LANE_H;
 
-    const line = (x, y1, y2, color, opacity) =>
-      '<line x1="' + x + '" y1="' + y1 + '" x2="' + x + '" y2="' + y2 + '" stroke="' + color +
-      '" stroke-width="2.2" opacity="' + opacity + '" stroke-linecap="round"/>';
+    // Where each lane starts and stops, in columns.
+    const span = {};
+    const owner = {};
+    cols.forEach((c, i) => {
+      for (const l of (c.activeLanes || [0])) {
+        const cur = span[l];
+        span[l] = cur ? [Math.min(cur[0], i), Math.max(cur[1], i)] : [i, i];
+      }
+      if (c.lane > 0 && !owner[c.lane]) {
+        owner[c.lane] = c.branch;
+      }
+      if (c.kind === 'merge' && c.fromLane > 0 && !owner[c.fromLane]) {
+        owner[c.fromLane] = c.branch;
+      }
+    });
 
-    /*
-     * A branch turns near its dot and runs straight the rest of the way.
-     *
-     * Stretching one S-curve across a whole row is what made this look limp:
-     * rows here are tall, so the bend was a lazy diagonal drifting across the
-     * gutter. Real graph tools bend tightly and travel straight, which is also
-     * what makes a lane readable as a lane. BEND caps how much of the row the
-     * turn is allowed to use.
-     */
-    const BEND = 26;
-    const curve = (x1, yFar, x2, yDot, color) => {
-      const dir = yFar > yDot ? 1 : -1;
-      const bend = Math.min(BEND, Math.abs(yFar - yDot));
-      const yTurn = yDot + dir * bend;
-      const c1 = yDot + dir * bend * 0.55;
-      return '<path d="M' + x1 + ' ' + yFar + ' L' + x1 + ' ' + yTurn +
-        ' C' + x1 + ' ' + c1 + ',' + x2 + ' ' + c1 + ',' + x2 + ' ' + yDot +
+    const curve = (x1, y1, x2, y2, color) => {
+      const bend = Math.min(BEND, Math.abs(x2 - x1));
+      const xTurn = x1 < x2 ? x2 - bend : x2 + bend;
+      const c1 = x1 < x2 ? x2 - bend * 0.45 : x2 + bend * 0.45;
+      return '<path d="M' + x1 + ' ' + y1 + ' L' + xTurn + ' ' + y1 +
+        ' C' + c1 + ' ' + y1 + ',' + x2 + ' ' + y1 + ',' + x2 + ' ' + y2 +
         '" fill="none" stroke="' + color + '" stroke-width="2.2" ' +
         'stroke-linecap="round" stroke-linejoin="round"/>';
     };
 
-    let s = '';
-    railCommits.forEach((c, i) => {
-      const g = geo[i];
-      if (!g) return;
-      const lanes = (c.activeLanes && c.activeLanes.length ? c.activeLanes : [0]);
-      /*
-       * Rows run newest first, so the row above is later in time and the row
-       * below is earlier, and a lane missing from one of them ends here.
-       *
-       * Beyond the list there is nothing, which is the truth: the newest row
-       * is where a branch that closed there stops. Pretending lanes continued
-       * past the ends was a workaround for terminating lanes on rows they did
-       * not belong to; the ownership check below handles that properly, and this made the
-       * closing dot on the newest row grow a line out of the top of the list.
-       */
-      const above = i > 0 ? railCommits[i - 1].activeLanes || [0] : [];
-      const below = i < railCommits.length - 1 ? railCommits[i + 1].activeLanes || [0] : [];
+    let g = '';
 
-      for (const lane of lanes) {
-        const color = laneColor(lane);
-        const isTrunk = lane === 0;
-        const opacity = lane === c.lane || isTrunk ? 0.95 : 0.5;
-        // A lane may only begin or end on a row that is actually its own. Any
-        // other row it merely passes through, whatever the neighbours say.
-        const owns = lane === c.lane || (c.kind === 'merge' && lane === c.fromLane);
-        const newest = !isTrunk && owns && above.indexOf(lane) === -1;
-        const oldest = !isTrunk && owns && below.indexOf(lane) === -1;
+    // Lane lines, and the name of whose branch each one is.
+    for (const key of Object.keys(span)) {
+      const lane = Number(key);
+      const [from, to] = span[lane];
+      const color = laneColor(lane);
+      const x1 = lane === 0 ? PADX - 60 : cx(from);
+      const x2 = lane === 0 ? cx(cols.length - 1) + 22 : cx(to);
+      g += '<line x1="' + x1 + '" y1="' + cy(lane) + '" x2="' + x2 + '" y2="' + cy(lane) +
+        '" stroke="' + color + '" stroke-width="2.2" opacity="' +
+        (lane === 0 ? 0.95 : 0.75) + '" stroke-linecap="round"/>';
+      const label = lane === 0 ? 'main' : (owner[lane] || 'branch ' + lane);
+      g += '<text class="lane-label" x="' + (PADX - 12) + '" y="' + (cy(lane) - 7) +
+        '" text-anchor="end">' + esc(fit(label, PADX - 18, 5.1)) + '</text>';
+    }
 
-        if (c.kind === 'merge' && lane === c.fromLane && lane !== c.lane) {
-          // Folds into the trunk here, so it has no rail above this row.
-          if (!oldest) {
-            s += line(lx(lane), g.mid + BEND, g.bottom, color, opacity);
-          }
-          s += curve(lx(lane), g.mid + BEND, lx(c.lane), g.mid, color);
-        } else {
-          const y1 = newest ? g.mid : g.top;
-          // Stops at the dot. Carrying on past it by the bend distance left a
-          // stub hanging below every branch point, attached to nothing.
-          const y2 = oldest ? g.mid : g.bottom;
-          if (y2 > y1) {
-            s += line(lx(lane), y1, y2, color, opacity);
-          }
-        }
-
-        // Wherever a branch begins, it begins on the trunk.
-        if (oldest && !(c.kind === 'merge' && lane === c.fromLane)) {
-          s += curve(lx(0), g.bottom, lx(lane), g.mid, color);
-        }
-      }
-
-      // The dot says what kind of moment this was without reading the text.
-      const x = lx(c.lane), y = g.mid, col = c.color || laneColor(c.lane);
-      if (c.kind === 'merge') {
-        s += '<circle cx="' + x + '" cy="' + y + '" r="' + (DOT + 1.4) + '" fill="var(--bg)" ' +
-             'stroke="' + col + '" stroke-width="2.6"/>';
-      } else if (c.kind === 'closed') {
-        // A branch that ended without landing: an open ring, deliberately
-        // quiet, so it reads as a stop rather than an achievement.
-        s += '<circle cx="' + x + '" cy="' + y + '" r="' + (DOT - 0.6) + '" fill="var(--bg)" ' +
-             'stroke="var(--muted)" stroke-width="2"/>';
-      } else if (c.kind === 'attention') {
-        s += '<circle cx="' + x + '" cy="' + y + '" r="' + (DOT + 0.6) + '" fill="var(--bg)" ' +
-             'stroke="var(--blocked)" stroke-width="2.4"/>';
-      } else if (c.kind === 'milestone') {
-        s += '<rect x="' + (x - DOT) + '" y="' + (y - DOT) + '" width="' + (DOT * 2) + '" ' +
-             'height="' + (DOT * 2) + '" rx="1.4" fill="' + col + '" stroke="var(--bg)" ' +
-             'stroke-width="2" transform="rotate(45 ' + x + ' ' + y + ')"/>';
-      } else {
-        s += '<circle cx="' + x + '" cy="' + y + '" r="' + (c.kind === 'fork' ? DOT : DOT - 1.2) +
-             '" fill="' + col + '" stroke="var(--bg)" stroke-width="2"/>';
+    // Where branches leave main and where they come back.
+    cols.forEach((c, i) => {
+      if (c.kind === 'fork' && c.lane > 0) {
+        g += curve(cx(i) - COL * 0.55, cy(0), cx(i), cy(c.lane), laneColor(c.lane));
+      } else if (c.kind === 'merge' && c.fromLane > 0) {
+        g += curve(cx(i) - COL * 0.55, cy(c.fromLane), cx(i), cy(0), laneColor(c.fromLane));
       }
     });
 
-    const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    overlay.setAttribute('class', 'git-rail-overlay');
-    overlay.setAttribute('height', String(gitTreeList.scrollHeight));
-    overlay.setAttribute('width', String(gutter));
-    overlay.innerHTML = s;
-    gitTreeList.appendChild(overlay);
+    // Commits.
+    cols.forEach((c, i) => {
+      const x = cx(i), y = cy(c.lane);
+      const col = c.color || laneColor(c.lane);
+      const on = state.selectedNodeId === c.sessionId;
+      let shape;
+      if (c.kind === 'merge') {
+        shape = '<circle cx="' + x + '" cy="' + y + '" r="' + (DOT + 1.2) +
+          '" fill="var(--bg)" stroke="' + col + '" stroke-width="2.6"/>';
+      } else if (c.kind === 'closed') {
+        shape = '<circle cx="' + x + '" cy="' + y + '" r="' + (DOT - 0.6) +
+          '" fill="var(--bg)" stroke="var(--muted)" stroke-width="2"/>';
+      } else if (c.kind === 'attention') {
+        shape = '<circle cx="' + x + '" cy="' + y + '" r="' + (DOT + 0.4) +
+          '" fill="var(--bg)" stroke="var(--blocked)" stroke-width="2.4"/>';
+      } else if (c.kind === 'milestone') {
+        shape = '<rect x="' + (x - DOT) + '" y="' + (y - DOT) + '" width="' + (DOT * 2) +
+          '" height="' + (DOT * 2) + '" rx="1.4" fill="' + col +
+          '" stroke="var(--bg)" stroke-width="2" transform="rotate(45 ' + x + ' ' + y + ')"/>';
+      } else {
+        shape = '<circle cx="' + x + '" cy="' + y + '" r="' +
+          (c.kind === 'fork' ? DOT : DOT - 1.2) + '" fill="' + col +
+          '" stroke="var(--bg)" stroke-width="2"/>';
+      }
+      g += '<g class="node" data-id="' + esc(c.sessionId) + '" data-commit="' + esc(c.id) + '">' +
+        (on ? '<circle cx="' + x + '" cy="' + y + '" r="' + (DOT + 5) +
+              '" fill="none" stroke="' + col + '" stroke-width="1.2" opacity=".55"/>' : '') +
+        shape + '<title>' + esc(c.title + ' · ' + c.relativeTime) + '</title></g>';
+    });
+
+    // A time ruler along the bottom, so the spacing means something.
+    for (let i = 0; i < cols.length; i += Math.max(1, Math.ceil(cols.length / 8))) {
+      g += '<text class="tick" x="' + cx(i) + '" y="' + (H - 2) + '" text-anchor="middle">' +
+        esc(cols[i].relativeTime) + '</text>';
+    }
+
+    const avail = Math.max(240, gitGraph.clientWidth - 8);
+    const scale = W > avail ? Math.max(0.62, avail / W) : 1;
+    gitGraph.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' +
+      Math.round(W * scale) + '" height="' + Math.round(H * scale) + '">' + g + '</svg>';
+
+    renderCommitDetail(cols);
   }
 
-  // Both surfaces are sized against the pane, so both follow it.
+  /** The one commit you asked about, rather than all forty at once. */
+  function renderCommitDetail(cols) {
+    const chosen =
+      cols.slice().reverse().find(c => c.sessionId === state.selectedNodeId) ||
+      cols[cols.length - 1];
+    if (!chosen) {
+      gitDetail.innerHTML = '<span class="empty-hint">Pick a commit above.</span>';
+      return;
+    }
+    const chips = (chosen.deliverables || []).map(d =>
+      '<span class="deliv-chip ' + (d.verified ? 'v-yes' : 'v-no') + '">' +
+      (d.verified ? '✓ ' : '⚠ ') + esc(d.spec) + '</span>').join('');
+
+    gitDetail.innerHTML =
+      '<div class="git-top">' +
+        '<span class="git-branch-badge" style="color:' + esc(chosen.color) +
+          '; border-color:color-mix(in srgb,' + esc(chosen.color) + ' 40%, var(--line));">' +
+          esc(chosen.branch) + '</span>' +
+        '<span class="git-badge ' + esc(chosen.status) + '">' +
+          esc(chosen.status.replace('_', ' ')) + '</span>' +
+        '<span class="git-time" title="' + esc(chosen.time) + '">' +
+          esc(chosen.relativeTime) + '</span>' +
+        '<span class="git-title" style="margin-left:6px;">' + esc(chosen.title) + '</span>' +
+      '</div>' +
+      (chosen.detail ? '<div class="git-detail">' + esc(chosen.detail) + '</div>' : '') +
+      (chips ? '<div class="git-chips">' + chips + '</div>' : '') +
+      '<div class="git-actions">' +
+        '<button class="prim" data-act="openTerminal" data-id="' + esc(chosen.sessionId) + '">&gt;_ Terminal</button>' +
+        '<button data-act="inspect" data-id="' + esc(chosen.sessionId) + '">⌕ Details</button>' +
+        '<button data-act="verify" data-id="' + esc(chosen.sessionId) + '">✓ Verify</button>' +
+        '<button data-act="merge" data-id="' + esc(chosen.sessionId) + '">⑂ Merge</button>' +
+      '</div>';
+  }
+
+  // Both drawings are sized against their pane, so both follow it.
   window.addEventListener('resize', () => {
-    drawRail();
     renderWorkflow();
+    renderGitTree();
   });
 
   function renderInspector(id) {
@@ -1656,9 +1629,11 @@ export class GraphPanel {
       return;
     }
 
-    const gitRow = e.target.closest('.git-row');
-    if (gitRow && !e.target.closest('button')) {
-      const id = gitRow.dataset.id;
+    // A commit on the timeline. Selecting it fills the strip underneath and
+    // highlights its agent in the pipeline diagram above.
+    const commit = e.target.closest('.node');
+    if (commit) {
+      const id = commit.dataset.id;
       state.selectedNodeId = (state.selectedNodeId === id) ? null : id;
       render();
       return;

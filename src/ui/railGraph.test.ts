@@ -216,9 +216,9 @@ ok(
   `${JSON.stringify(tidied[0]?.activeLanes)} vs ${JSON.stringify(tidied[tidied.length - 1]?.activeLanes)}`
 );
 
-console.log('\nthe rail as drawn');
+console.log('\nthe timeline as drawn');
 
-/** Enough DOM for the graph script to boot and measure rows. */
+/** Enough DOM for the graph script to boot and draw. */
 function drawnRail(commits: Record<string, unknown>[]): string {
   const source = (() => {
     const html = GraphPanel.prototype.html.call({} as never);
@@ -226,43 +226,25 @@ function drawnRail(commits: Record<string, unknown>[]): string {
     return html.slice(html.indexOf('>', open) + 1, html.indexOf('</script>', open));
   })();
 
-  let overlayHtml = '';
-  const ROW_H = 90;
-
-  const makeEl = (id: string): Record<string, unknown> => {
-    const el: Record<string, unknown> = {
-      id,
-      innerHTML: '',
-      textContent: '',
-      clientWidth: 520,
-      scrollHeight: 0,
-      style: { setProperty: (): void => undefined },
-      classList: { add: () => undefined, remove: () => undefined, toggle: () => undefined },
-      addEventListener: () => undefined,
-      appendChild: (child: { outerKind?: string; innerHTML?: string }) => {
-        if (child && child.outerKind === 'svg') {
-          overlayHtml = String(child.innerHTML ?? '');
-        }
-      },
-      querySelector: () => null,
-      querySelectorAll: (sel: string) => {
-        if (sel === '.git-row') {
-          const n = String(el.innerHTML ?? '').split('class="git-row').length - 1;
-          return Array.from({ length: n }, (_, i) => ({
-            offsetTop: i * ROW_H,
-            offsetHeight: ROW_H,
-          }));
-        }
-        return [];
-      },
-    };
-    return el;
-  };
+  const makeEl = (id: string): Record<string, unknown> => ({
+    id,
+    innerHTML: '',
+    textContent: '',
+    clientWidth: 900,
+    scrollHeight: 0,
+    style: { setProperty: (): void => undefined },
+    classList: { add: () => undefined, remove: () => undefined, toggle: () => undefined },
+    addEventListener: () => undefined,
+    appendChild: () => undefined,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  });
 
   const nodes: Record<string, Record<string, unknown>> = {};
   for (const id of [
-    'commit-count', 'd-body', 'd-close', 'd-title', 'dag-canvas', 'git-tree-list',
-    'git-tree-pane', 'hud', 'inspector-drawer', 'scope-btn', 'search', 'workflow-pane',
+    'commit-count', 'd-body', 'd-close', 'd-title', 'dag-canvas', 'git-graph',
+    'git-detail', 'git-tree-pane', 'hud', 'inspector-drawer', 'scope-btn',
+    'search', 'workflow-pane',
   ]) {
     nodes[id] = makeEl(id);
   }
@@ -272,25 +254,25 @@ function drawnRail(commits: Record<string, unknown>[]): string {
     acquireVsCodeApi: () => ({ postMessage: () => undefined }),
     document: {
       getElementById: (id: string) => nodes[id] ?? makeEl(id),
-      createElementNS: () => ({
-        outerKind: 'svg',
-        innerHTML: '',
-        setAttribute: () => undefined,
-      }),
+      createElementNS: () => ({ innerHTML: '', setAttribute: () => undefined }),
+      querySelectorAll: () => [],
       body: { style: { setProperty: (): void => undefined } },
       addEventListener: () => undefined,
     },
     window: {
-      addEventListener: (type: string, fn: (e: { data: unknown }) => void) => {
-        if (type === 'message') {
-          listeners.push(fn);
-        }
-      },
+      addEventListener: () => undefined,
       removeEventListener: () => undefined,
     },
     setTimeout: () => 0,
     console: { log: () => undefined, error: () => undefined },
   };
+  // The script registers its snapshot listener on window; capture it directly.
+  sandbox.window.addEventListener = ((type: string, fn: (e: { data: unknown }) => void) => {
+    if (type === 'message') {
+      listeners.push(fn);
+    }
+  }) as never;
+
   vm.createContext(sandbox);
   new vm.Script(source).runInContext(sandbox);
 
@@ -302,10 +284,10 @@ function drawnRail(commits: Record<string, unknown>[]): string {
       },
     });
   }
-  return overlayHtml;
+  return String(nodes['git-graph'].innerHTML ?? '');
 }
 
-const rail = drawnRail(
+const timeline = drawnRail(
   GraphPanel.prototype.buildGitTree.call(
     {},
     ['core', 'email', 'phone'].map(session),
@@ -318,45 +300,41 @@ const rail = drawnRail(
   ) as unknown as Record<string, unknown>[]
 );
 
-ok('something was drawn', rail.length > 0);
+ok('something was drawn', timeline.includes('<svg'));
+ok('main is labelled', timeline.includes('>main<'));
 
-/* Every curve has to land on a commit dot. A path ending in empty space is
-   precisely the "line coming out of nowhere" this graph kept producing. */
-const dots = [...rail.matchAll(/<circle cx="([-\d.]+)" cy="([-\d.]+)"/g)].map((m) => [
+const dots = [...timeline.matchAll(/<circle cx="([-\d.]+)" cy="([-\d.]+)"/g)].map((m) => [
   Number(m[1]),
   Number(m[2]),
 ]);
-const squares = [...rail.matchAll(/<rect x="([-\d.]+)" y="([-\d.]+)"/g)].map((m) => [
+const squares = [...timeline.matchAll(/<rect x="([-\d.]+)" y="([-\d.]+)"/g)].map((m) => [
   Number(m[1]) + 5.2,
   Number(m[2]) + 5.2,
 ]);
 const targets = [...dots, ...squares];
-const ends = [...rail.matchAll(/C[^"]*?,([-\d.]+) ([-\d.]+)"/g)].map((m) => [
+/* Every fork and merge curve has to land on a commit. A curve ending in empty
+   space is the "line coming out of nowhere" this graph kept producing. */
+const ends = [...timeline.matchAll(/C[^"]*?,([-\d.]+) ([-\d.]+)"/g)].map((m) => [
   Number(m[1]),
   Number(m[2]),
 ]);
-
 const near = (a: number[], b: number[]): boolean =>
   Math.abs(a[0] - b[0]) < 0.6 && Math.abs(a[1] - b[1]) < 0.6;
 const orphans = ends.filter((e) => !targets.some((t) => near(e, t)));
 
-ok('curves exist at all', ends.length > 0, `${ends.length} curves, ${targets.length} dots`);
+ok('branches leave and rejoin', ends.length >= 3, `${ends.length} curves`);
 ok(
-  'every curve ends on a dot',
+  'every curve ends on a commit',
   orphans.length === 0,
   `${orphans.length} of ${ends.length} land in empty space: ${JSON.stringify(orphans.slice(0, 4))}`
 );
 
-/* And nothing is drawn outside the list. */
-const ys = [...rail.matchAll(/y[12]?="([-\d.]+)"/g)].map((m) => Number(m[1]));
-ok('nothing is drawn above the first row', Math.min(...ys) >= -0.01, `min y ${Math.min(...ys)}`);
-
-console.log('\na branch that ends on the newest row');
+console.log('\na branch that ends without merging');
 
 /*
- * The last of the stray lines: a branch archived without merging closes on the
- * very top row, and the rail carried on above its dot to the edge of the list.
- * Drawn beside the trunk it read as a second main line.
+ * A branch archived rather than merged closes at its own dot. Its lane must
+ * not carry on to the right of it — to the right is later, and there is no
+ * later for a branch that has ended.
  */
 const closing = drawnRail(
   GraphPanel.prototype.buildGitTree.call(
@@ -367,18 +345,20 @@ const closing = drawnRail(
 );
 
 const stopDot = /<circle cx="([-\d.]+)" cy="([-\d.]+)"[^>]*stroke="var\(--muted\)"/.exec(closing);
-ok('the closing row draws a stop', stopDot !== null, closing.slice(0, 200));
+ok('the closing commit draws a stop', stopDot !== null, closing.slice(0, 240));
 
 if (stopDot) {
-  const cx = Number(stopDot[1]);
-  const cy = Number(stopDot[2]);
-  const above = [...closing.matchAll(/<line x1="([-\d.]+)" y1="([-\d.]+)" x2="[-\d.]+" y2="([-\d.]+)"/g)]
-    .map((m) => ({ x: Number(m[1]), y1: Number(m[2]), y2: Number(m[3]) }))
-    .filter((l) => Math.abs(l.x - cx) < 0.6 && Math.min(l.y1, l.y2) < cy - 0.6);
+  const sx = Number(stopDot[1]);
+  const sy = Number(stopDot[2]);
+  const past = [...closing.matchAll(
+    /<line x1="([-\d.]+)" y1="([-\d.]+)" x2="([-\d.]+)" y2="([-\d.]+)"/g
+  )]
+    .map((m) => ({ x1: Number(m[1]), y1: Number(m[2]), x2: Number(m[3]), y2: Number(m[4]) }))
+    .filter((l) => Math.abs(l.y1 - sy) < 0.6 && Math.max(l.x1, l.x2) > sx + 0.6);
   ok(
-    'and nothing runs above it',
-    above.length === 0,
-    `${above.length} segment(s) above the stop at y=${cy}: ${JSON.stringify(above)}`
+    'and its lane stops there',
+    past.length === 0,
+    `${past.length} segment(s) past the stop at x=${sx}: ${JSON.stringify(past)}`
   );
 }
 
