@@ -41,7 +41,7 @@ interface GitCommitNode {
   branch: string;
   lane: number;
   color: string;
-  kind: 'fork' | 'commit' | 'milestone' | 'merge' | 'attention';
+  kind: 'fork' | 'commit' | 'milestone' | 'merge' | 'attention' | 'closed';
   status: string;
   time: string;
   relativeTime: string;
@@ -479,6 +479,43 @@ export class GraphPanel {
           spend: s?.budget?.costEstimate,
           activeLanes: currentActive,
         });
+      } else if (
+        (event.type === 'archived' || event.type === 'purged') &&
+        !mergedAt.has(event.session)
+      ) {
+        // Worth a row of its own: without one, a branch that was archived
+        // rather than merged had nowhere to end, so its lane ran the whole
+        // height of the list looking for a dot that was never drawn.
+        //
+        // Only when it never merged. Archiving a branch that has already
+        // landed is bookkeeping — the branch's life ended at the merge, and a
+        // second ending after it would drag the lane back up past its own.
+        commits.push({
+          id: `${event.type}-${event.seq}`,
+          sessionId: event.session,
+          role,
+          branch: branchName,
+          lane: sessionLane,
+          color: sessionColor,
+          kind: 'closed',
+          status: 'archived',
+          time,
+          relativeTime: relTime,
+          title:
+            event.type === 'purged'
+              ? `Deleted ${branchName}`
+              : `Archived ${branchName}`,
+          detail:
+            event.type === 'purged'
+              ? `Branch and worktree removed. Nothing of ${event.session} is left on disk.`
+              : `${event.session} was closed without merging. Its branch is no longer live.`,
+          deliverables: (s?.deliverables || []).map((d) => ({
+            spec: d.spec,
+            verified: d.verified,
+            detail: d.detail,
+          })),
+          activeLanes: currentActive,
+        });
       } else if (event.type === 'spawned') {
         const parentLane = 0;
         commits.push({
@@ -563,7 +600,87 @@ export class GraphPanel {
       }
     }
 
-    return commits.slice(0, 100);
+    const shown = commits.slice(0, 100);
+
+    /*
+     * Lanes are finally assigned from the rows that exist, not from the events
+     * that happened.
+     *
+     * Sequence numbers include events that draw nothing — archiving a session,
+     * deleting its worktree. A lane closed by one of those ended at a position
+     * with no row in it, so it stayed active on every row that *was* drawn and
+     * ran the full height of the list with no dot to end at. That is the
+     * second line beside the trunk: a branch whose life ended somewhere the
+     * list cannot show.
+     *
+     * Working in row positions makes that impossible. A lane spans its own
+     * first and last rows, both of which are on screen by construction.
+     */
+    const newestRow = new Map<string, number>();
+    const oldestRow = new Map<string, number>();
+    const finished = new Set<string>();
+    shown.forEach((c, i) => {
+      if (!newestRow.has(c.sessionId)) {
+        newestRow.set(c.sessionId, i);
+        // The topmost row for a branch is the newest thing that happened to
+        // it. If that is where it merged or was closed, the lane ends there;
+        // anything else and the branch is still live, so its lane carries on
+        // past the newest row in the list rather than stopping mid-air.
+        if (c.kind === 'merge' || c.kind === 'closed') {
+          finished.add(c.sessionId);
+        }
+      }
+      oldestRow.set(c.sessionId, i);
+    });
+    for (const id of newestRow.keys()) {
+      if (!finished.has(id)) {
+        newestRow.set(id, 0);
+      }
+    }
+
+    // Rows run newest first, so a branch begins at its highest index.
+    const byBirth = [...oldestRow.keys()].sort(
+      (x, y) => (oldestRow.get(y) ?? 0) - (oldestRow.get(x) ?? 0)
+    );
+    const laneFor = new Map<string, number>();
+    const takenUntil: number[] = [];
+    for (const id of byBirth) {
+      const birth = oldestRow.get(id) ?? 0;
+      let lane = 1;
+      // Larger index means older, so a lane is free only if its last occupant
+      // died below where this branch is born.
+      while (takenUntil[lane] !== undefined && (takenUntil[lane] ?? 0) <= birth) {
+        lane++;
+      }
+      takenUntil[lane] = newestRow.get(id) ?? birth;
+      laneFor.set(id, lane);
+    }
+
+    const covers = (id: string, row: number): boolean =>
+      (newestRow.get(id) ?? 0) <= row && row <= (oldestRow.get(id) ?? 0);
+
+    shown.forEach((c, i) => {
+      const lane = laneFor.get(c.sessionId) ?? 1;
+      if (c.kind === 'merge') {
+        c.fromLane = lane;
+        c.toLane = 0;
+        c.lane = 0;
+        c.color = LANE_COLORS[0];
+      } else {
+        c.lane = lane;
+        c.fromLane = 0;
+        c.color = LANE_COLORS[lane % LANE_COLORS.length];
+      }
+      const live = [0];
+      for (const id of laneFor.keys()) {
+        if (covers(id, i)) {
+          live.push(laneFor.get(id) ?? 1);
+        }
+      }
+      c.activeLanes = live;
+    });
+
+    return shown;
   }
 
   /** Show every agent this workspace has ever had, rather than the current run. */
@@ -1409,6 +1526,11 @@ export class GraphPanel {
       if (c.kind === 'merge') {
         s += '<circle cx="' + x + '" cy="' + y + '" r="' + (DOT + 1.4) + '" fill="var(--bg)" ' +
              'stroke="' + col + '" stroke-width="2.6"/>';
+      } else if (c.kind === 'closed') {
+        // A branch that ended without landing: an open ring, deliberately
+        // quiet, so it reads as a stop rather than an achievement.
+        s += '<circle cx="' + x + '" cy="' + y + '" r="' + (DOT - 0.6) + '" fill="var(--bg)" ' +
+             'stroke="var(--muted)" stroke-width="2"/>';
       } else if (c.kind === 'attention') {
         s += '<circle cx="' + x + '" cy="' + y + '" r="' + (DOT + 0.6) + '" fill="var(--bg)" ' +
              'stroke="var(--blocked)" stroke-width="2.4"/>';
