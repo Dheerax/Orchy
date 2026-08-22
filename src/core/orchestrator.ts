@@ -128,6 +128,9 @@ export class Orchestrator extends EventEmitter {
     try {
       const models = await this.backend.models();
       this.models.replace(models);
+      // The project's preferences are applied on every refresh, so editing the
+      // config takes effect without a reload — as with every other field in it.
+      this.models.pin(this.project().models);
       return this.models.models.length;
     } catch {
       // A backend that cannot list its models is not a broken backend. The

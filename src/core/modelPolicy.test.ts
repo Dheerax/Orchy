@@ -94,6 +94,60 @@ ok(
 );
 ok('no model is offered twice', new Set(policy.candidates('google/mid')).size === policy.candidates('google/mid').length);
 
+console.log('\nproviders that bill by subscription');
+
+/*
+ * Found by running against a real catalogue. Antigravity reports every model at
+ * zero cost because it bills by subscription, which put Claude Opus in the same
+ * tier as a tiny free model — so an orchestrator asking for something cheap to
+ * do mechanical work would have been handed the most capable model available
+ * and told it was being frugal.
+ */
+const subscription = new ModelPolicy([
+  model('sub/opus-thinking', 0, { context: 1_000_000 }),
+  model('sub/sonnet', 0, { context: 400_000 }),
+  model('sub/flash', 0, { context: 200_000 }),
+  model('sub/tiny', 0, { context: 64_000 }),
+  model('sub/tiniest', 0, { context: 40_000 }),
+]);
+
+ok(
+  'a frontier model is not called cheap just because it has no price',
+  subscription.tierOf('sub/opus-thinking') !== 'cheap',
+  `got ${subscription.tierOf('sub/opus-thinking')}`
+);
+check('while the smallest still is', subscription.tierOf('sub/tiniest'), 'cheap');
+ok(
+  'and nothing is called strong on the strength of having no price',
+  subscription.models.every((m) => subscription.tierOf(m.id) !== 'strong')
+);
+
+// One free model on its own says nothing either way, so the cautious reading
+// is the cheap one.
+const alone = new ModelPolicy([model('sub/only', 0)]);
+check('a lone free model is cheap', alone.tierOf('sub/only'), 'cheap');
+
+console.log('\nwhat the project pinned');
+
+const pinned = new ModelPolicy(catalogue);
+pinned.pin({ cheap: 'google/mid', strong: 'opencode/free-big' });
+check('a pin decides the tier outright', pinned.tierOf('google/mid'), 'cheap');
+check('even against the price', pinned.tierOf('opencode/free-big'), 'strong');
+check('and it is tried first', pinned.candidates(undefined, 'cheap')[0], 'google/mid');
+ok(
+  'unpinned models are still ranked underneath it',
+  pinned.candidates(undefined, 'cheap').length === catalogue.length
+);
+
+// A pin for a model that is not installed must not silently empty the tier.
+const stale = new ModelPolicy(catalogue);
+stale.pin({ cheap: 'gone/withdrawn' });
+ok(
+  'a pin on a model that is not there is ignored rather than obeyed',
+  stale.candidates(undefined, 'cheap').length > 0 &&
+    stale.candidates(undefined, 'cheap')[0] !== 'gone/withdrawn'
+);
+
 console.log('\nwith no catalogue at all');
 
 const blind = new ModelPolicy([]);

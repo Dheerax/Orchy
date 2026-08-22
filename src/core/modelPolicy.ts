@@ -39,9 +39,21 @@ const MIN_CONTEXT = 32_000;
 
 export class ModelPolicy {
   private catalogue: ModelInfo[] = [];
+  private pinned: { cheap?: string; standard?: string; strong?: string } = {};
 
   constructor(models: ModelInfo[] = []) {
     this.replace(models);
+  }
+
+  /**
+   * The project's own preference per tier.
+   *
+   * Whatever a catalogue's prices imply, the person who owns the repository has
+   * the last word on what "cheap" means in it — and on providers that bill by
+   * subscription rather than by token, they are the only word.
+   */
+  pin(models: { cheap?: string; standard?: string; strong?: string }): void {
+    this.pinned = { ...models };
   }
 
   /** Models that can actually run an agent, cheapest first. */
@@ -75,8 +87,38 @@ export class ModelPolicy {
     if (!model) {
       return 'standard';
     }
+
+    // Pinned in the project's config: a stated preference outranks anything
+    // inferred, and it is the only reliable answer when a provider's prices
+    // say nothing useful.
+    for (const tier of ['cheap', 'standard', 'strong'] as const) {
+      if (this.pinned[tier] === id) {
+        return tier;
+      }
+    }
+
+    /*
+     * A price of zero says how it is billed, not how good it is.
+     *
+     * Subscription providers report every model at zero, which put Claude Opus
+     * in the same tier as a tiny free model — so an orchestrator picking
+     * "cheap" for mechanical work would have chosen the most expensive thing
+     * available and believed it was being frugal.
+     *
+     * Among free models the only honest signal left is the context window,
+     * which tracks model class far better than a price of zero does. The
+     * bottom half is cheap; the rest is ordinary. Nothing is called strong on
+     * the strength of having no price — that has to be earned by costing
+     * money, or stated in the config.
+     */
     if (model.inputCost === 0) {
-      return 'cheap';
+      const free = this.catalogue.filter((m) => m.inputCost === 0);
+      if (free.length < 2) {
+        return 'cheap';
+      }
+      const contexts = free.map((m) => m.context).sort((a, b) => a - b);
+      const midpoint = contexts[Math.floor(contexts.length / 2)];
+      return model.context < midpoint ? 'cheap' : 'standard';
     }
     const paid = this.catalogue.filter((m) => m.inputCost > 0);
     if (paid.length < 2) {
@@ -95,6 +137,17 @@ export class ModelPolicy {
   /** The best available models for a tier, in the order they should be tried. */
   forTier(tier: Tier): ModelInfo[] {
     const matching = this.catalogue.filter((m) => this.tierOf(m.id) === tier);
+    const choice = this.pinned[tier];
+    if (choice && matching.some((m) => m.id === choice)) {
+      // First, not merely present: being asked for is the whole point of a pin.
+      const rest = matching.filter((m) => m.id !== choice);
+      const first = matching.find((m) => m.id === choice);
+      return first ? [first, ...this.rank(tier, rest)] : this.rank(tier, matching);
+    }
+    return this.rank(tier, matching);
+  }
+
+  private rank(tier: Tier, matching: ModelInfo[]): ModelInfo[] {
     if (tier === 'strong') {
       // Strongest first: for the work that actually needs it, price is the point.
       return [...matching].sort((a, b) => b.inputCost - a.inputCost);
