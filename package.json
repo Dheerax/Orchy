@@ -2,7 +2,7 @@
   "name": "orchy",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code — a grid of isolated agents, driven by an orchestrator, with live topology.",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {

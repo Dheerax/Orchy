@@ -844,11 +844,16 @@ export class GraphPanel {
     pointer-events: none; overflow: visible;
   }
 
+  /* Every row the same height, like a commit log. Rows that grew to fit their
+     own contents put every dot at a different spacing, which is the difference
+     between a graph and a scatter of circles. The detail is one click away. */
   .git-row {
-    display: flex; gap: 10px; align-items: stretch;
-    padding: 5px 8px 6px 0; cursor: pointer; position: relative;
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 6px 8px 6px 0; cursor: pointer; position: relative;
     border-left: 2px solid transparent;
+    height: 52px; overflow: hidden;
   }
+  .git-row.selected { height: auto; overflow: visible; }
   .git-row:hover { background: var(--hover-bg); }
   .git-row.selected { background: color-mix(in srgb, var(--running) 10%, transparent);
                       border-left-color: var(--running); }
@@ -889,8 +894,12 @@ export class GraphPanel {
   /* Every row carrying four buttons made each one tall enough that the graph
      beside it was mostly empty gutter. They appear for the row under the
      pointer, which is the only row they can be meant for. */
-  .git-actions { display: none; gap: 4px; align-items: center; margin-top: 4px; }
-  .git-row:hover .git-actions, .git-row.selected .git-actions { display: flex; }
+  /* Detail, deliverables and controls belong to the row you picked, not to all
+     forty of them at once. */
+  .git-detail, .git-chips, .git-actions { display: none; }
+  .git-row.selected .git-detail { display: block; }
+  .git-row.selected .git-chips { display: flex; }
+  .git-row.selected .git-actions { display: flex; gap: 4px; align-items: center; margin-top: 4px; }
   .git-actions button {
     background: none; border: 1px solid var(--line); border-radius: 4px;
     color: var(--muted); font-size: 10px; padding: 1px 6px; cursor: pointer;
@@ -1287,10 +1296,17 @@ export class GraphPanel {
     gitTreeList.style.setProperty('--gutter', gutter + 'px');
 
     const lx = l => EDGE + l * LANE_W;
+    /*
+     * The dot belongs to the row's first line, not to the middle of however
+     * tall the row happens to be. Anchoring to the middle meant one expanded
+     * row pushed its dot out of line with every other, and a graph whose dots
+     * do not line up does not read as a graph at all.
+     */
+    const ANCHOR = 26;
     const geo = rows.map(r => ({
       top: r.offsetTop,
       bottom: r.offsetTop + r.offsetHeight,
-      mid: r.offsetTop + r.offsetHeight / 2,
+      mid: Math.min(r.offsetTop + r.offsetHeight / 2, r.offsetTop + ANCHOR),
     }));
 
     const line = (x, y1, y2, color, opacity) =>
@@ -1352,7 +1368,9 @@ export class GraphPanel {
           s += curve(lx(lane), g.mid + BEND, lx(c.lane), g.mid, color);
         } else {
           const y1 = newest ? g.mid : g.top;
-          const y2 = oldest ? g.mid + BEND : g.bottom;
+          // Stops at the dot. Carrying on past it by the bend distance left a
+          // stub hanging below every branch point, attached to nothing.
+          const y2 = oldest ? g.mid : g.bottom;
           if (y2 > y1) {
             s += line(lx(lane), y1, y2, color, opacity);
           }
