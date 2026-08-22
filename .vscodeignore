@@ -9,3 +9,8 @@ mcp/smoke.mjs
 .gitignore
 tsconfig.json
 ARCHITECTURE.md
+media/make-icon.mjs
+CONTRIBUTING.md
+*.vsix
+.orchy/**
+docs/*.example.*

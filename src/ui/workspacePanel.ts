@@ -417,9 +417,6 @@ export class WorkspacePanel {
         WorkspacePanel.inspected = msg.id;
         await this.push();
         break;
-      case 'openConfig':
-        await vscode.commands.executeCommand('orchy.createProjectConfig');
-        break;
       case 'copy':
         // Through the host rather than the webview: the clipboard API is
         // unavailable in a webview often enough that it cannot be relied on,
@@ -1208,50 +1205,37 @@ export class WorkspacePanel {
    * the empty panel offers the shapes, and hands over an instruction that can
    * be pasted straight to an orchestrator rather than describing one.
    */
+  /*
+   * What to say when nothing is running.
+   *
+   * Only two things belong here: anything that would stop a pipeline from
+   * working, and what to do next. An earlier version offered to create the
+   * project's config file from this panel, which was a settings dialogue
+   * wearing an empty state — the config is a file, edited like a file, and
+   * putting a button for it in front of someone who has not started anything
+   * yet answers a question they have not asked.
+   */
   function emptyHtml(d) {
-    // Anything broken comes first. Telling someone whose OpenCode is not
-    // installed how to start a pipeline is an invitation to fail later for a
-    // reason they will not connect to this.
-    const broken = (d.setup || []).map(c =>
+    const trouble = [
+      ...(d.setup || []).map(c => ({ name: c.name, text: c.fix || c.detail })),
+      ...(((d.project || {}).warnings) || []).map(w => ({ name: 'Project config', text: w })),
+    ];
+
+    const broken = trouble.map(t =>
       '<div class="broke">' +
-        '<div class="bname">' + esc(c.name) + '</div>' +
-        '<div class="bfix">' + esc(c.fix || c.detail) + '</div>' +
+        '<div class="bname">' + esc(t.name) + '</div>' +
+        '<div class="bfix">' + esc(t.text) + '</div>' +
       '</div>').join('');
 
-    const p = d.project || { rules: [], warnings: [] };
-    const warnings = (p.warnings || []).map(w =>
-      '<div class="broke"><div class="bfix">' + esc(w) + '</div></div>').join('');
-
-    const rules = (p.rules || []).map(r => '<li>' + esc(r) + '</li>').join('');
-    const project = p.path
-      ? '<div class="shape">' +
-          '<div class="sname">This project’s rules' +
-            '<span class="scount">.orchy.json</span>' +
-            '<button class="scopy" data-openconfig="1">Edit</button>' +
-          '</div>' +
-          (rules
-            ? '<ul class="rules">' + rules + '</ul>'
-            : '<div class="swhen">No rules set yet.</div>') +
-          (p.verify
-            ? '<div class="swhen">Every agent must also pass <code>' + esc(p.verify) + '</code></div>'
-            : '') +
-        '</div>'
-      : '<div class="shape">' +
-          '<div class="sname">No project rules' +
-            '<span class="scount">.orchy.json</span>' +
-            '<button class="scopy" data-openconfig="1">Create</button>' +
-          '</div>' +
-          '<div class="swhen">Conventions every agent should be told without you ' +
-          'having to type them each time — the language, the test command, whether new ' +
-          'dependencies are welcome. Committed, so the rest of the team gets them too.</div>' +
-        '</div>';
-
     return '<div class="empty">' +
-      (broken || warnings ? '<div class="shapes">' + broken + warnings + '</div>' : '') +
-      '<p>' + (broken ? 'Fix those first, then describe' : 'Nothing is running. Describe') +
-      ' the work to your orchestrator — it will propose a pipeline for you to approve.</p>' +
-      '<div class="shapes">' + project + '</div>' +
-      '</div>';
+      (broken ? '<div class="shapes">' + broken + '</div>' : '') +
+      '<p>' +
+      (broken
+        ? 'Agents cannot run until those are fixed.'
+        : 'Nothing is running. Describe the work to your orchestrator and it will ' +
+          'propose a pipeline for you to approve. Each agent gets its own git ' +
+          'worktree and appears here.') +
+      '</p></div>';
   }
 
   function statusColor(status) {
@@ -1328,10 +1312,6 @@ export class WorkspacePanel {
     }
     const plan = e.target.closest('[data-plan]');
     if (plan) { api.postMessage({ type: plan.dataset.plan }); return; }
-    if (e.target.closest('[data-openconfig]')) {
-      api.postMessage({ type: 'openConfig' });
-      return;
-    }
     const pick = e.target.closest('[data-inspect]');
     if (pick) { api.postMessage({ type: 'inspect', id: pick.dataset.inspect }); return; }
     if (e.target.closest('[data-close]')) { api.postMessage({ type: 'closeInspect' }); return; }

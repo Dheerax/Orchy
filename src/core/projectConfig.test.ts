@@ -2,7 +2,13 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { CONFIG_FILE, loadProjectConfig, rulesBlock, exampleConfig } from './projectConfig';
+import {
+  CONFIG_FILE,
+  ensureProjectConfig,
+  exampleConfig,
+  loadProjectConfig,
+  rulesBlock,
+} from './projectConfig';
 
 let failures = 0;
 let checks = 0;
@@ -21,8 +27,11 @@ function check(label: string, actual: unknown, expected: unknown): void {
 }
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orchy-cfg-'));
-const write = (text: string): void =>
-  fs.writeFileSync(path.join(root, CONFIG_FILE), text, 'utf8');
+const write = (text: string): void => {
+  const file = path.join(root, CONFIG_FILE);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text, 'utf8');
+};
 
 console.log('\nno config at all');
 
@@ -108,6 +117,32 @@ const example = loadProjectConfig(root);
 check('the example parses cleanly', example.warnings, []);
 ok('and sets something useful', example.rules.length > 0 && example.verify !== undefined);
 
+console.log('\ncreating one');
+
+const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'orchy-new-'));
+const made = ensureProjectConfig(fresh);
+ok('the file is written', fs.existsSync(made));
+check('and it is inside .orchy', path.basename(path.dirname(made)), '.orchy');
+
+/*
+ * .orchy holds two unlike things: this file, which the team shares, and the
+ * event log and daemon handshake, which are one machine's working state and
+ * would conflict on every pull. The rule is written down next to the files
+ * rather than left for everyone to work out.
+ */
+const ignore = fs.readFileSync(path.join(path.dirname(made), '.gitignore'), 'utf8');
+ok('the working state is ignored', ignore.includes('*'));
+ok('but the config is not', ignore.includes('!config.json'));
+
+const before = fs.readFileSync(made, 'utf8');
+fs.writeFileSync(made, '{ "rules": ["mine"] }', 'utf8');
+ensureProjectConfig(fresh);
+ok(
+  'and running it again never overwrites what someone wrote',
+  fs.readFileSync(made, 'utf8') !== before
+);
+
+fs.rmSync(fresh, { recursive: true, force: true });
 fs.rmSync(root, { recursive: true, force: true });
 
 console.log(failures === 0 ? `\nPASS — ${checks} checks\n` : `\n${failures} of ${checks} FAILED\n`);

@@ -95,8 +95,7 @@ run on. Approve it and the agents start.
 
 ## Project rules
 
-Run **`Orchy: Create Project Config`** to write a `.orchy.json` at the repository
-root. It is where the things an orchestrator cannot infer live:
+Run **`Orchy: Create Project Config`** to write a `.orchy/config.json`. It is where the things an orchestrator cannot infer live:
 
 ```json
 {
@@ -164,7 +163,7 @@ retry; a dead server fails the same way forever.
 | Tool | What it does |
 |---|---|
 | `orchy_guide` | How to operate the pipeline. Read this first |
-| `orchy_project` | This repository's rules, from its `.orchy.json` |
+| `orchy_project` | This repository's rules, from its `.orchy/config.json` |
 | `orchy_models` | Available models with tier and price |
 | `orchy_plan` / `orchy_plan_status` | Propose a pipeline and await approval |
 | `orchy_spawn` | One agent, in its own worktree |

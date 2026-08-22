@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { OpenCodeBackend } from './backends/opencodeBackend';
@@ -6,7 +5,7 @@ import { DeliverableVerifier } from './core/deliverableVerifier';
 import { Check, checkSetup, summarise } from './core/doctor';
 import { EventLog } from './core/eventLog';
 import { Orchestrator } from './core/orchestrator';
-import { CONFIG_FILE, exampleConfig, loadProjectConfig } from './core/projectConfig';
+import { CONFIG_FILE, ensureProjectConfig, loadProjectConfig } from './core/projectConfig';
 import { Planner } from './core/planner';
 import { SessionRegistry } from './core/sessionRegistry';
 import { Session } from './core/types';
@@ -308,10 +307,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
      * dependencies, and that is worth writing down once.
      */
     vscode.commands.registerCommand('orchy.createProjectConfig', async () => {
-      const file = path.join(root, CONFIG_FILE);
-      if (!fs.existsSync(file)) {
-        fs.writeFileSync(file, exampleConfig(), 'utf8');
-      }
+      const file = ensureProjectConfig(root);
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
       await vscode.window.showTextDocument(doc, { preview: false });
       void vscode.window.showInformationMessage(

@@ -119,7 +119,7 @@ const TOOLS = [
   {
     name: 'orchy_project',
     description:
-      "This repository's own rules, from its .orchy.json: house conventions every agent " +
+      "This repository's own rules, from its .orchy/config.json: house conventions every agent " +
       'is given, the command its work has to pass, preferred models per tier, and its ' +
       'budget. Read it before planning. The rules are already appended to every agent ' +
       'brief so they do not need repeating in tasks, but they change what a sensible plan ' +

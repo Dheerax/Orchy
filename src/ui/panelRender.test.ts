@@ -207,42 +207,35 @@ ok('and a diagram, since there is more than one stage', panel.grid.innerHTML.inc
 ok('nothing fell over', !panel.grid.innerHTML.includes('could not draw'));
 ok('the header says a decision is wanted', panel.count.textContent.includes('approval'));
 
-panel.send({
-  ...base,
-  plan: undefined,
-  project: { path: '/repo/.orchy.json', rules: ['Plain CommonJS.'], verify: 'npm test', warnings: [] },
-});
-ok(
-  'an empty pipeline shows the project rules rather than going blank',
-  panel.grid.innerHTML.includes('Plain CommonJS')
-);
-ok('and the check every agent must pass', panel.grid.innerHTML.includes('npm test'));
-
 panel.send({ ...base, plan: undefined, project: { rules: [], warnings: [] } });
 ok(
-  'with no config it offers to make one',
-  panel.grid.innerHTML.includes('data-openconfig')
+  'an empty pipeline says what to do rather than going blank',
+  panel.grid.innerHTML.includes('Describe the work')
+);
+ok(
+  'and does not turn itself into a settings dialogue',
+  !panel.grid.innerHTML.includes('data-openconfig')
 );
 
-// A malformed config costs the user the settings they got wrong, not the
-// ability to see anything.
+// A malformed config is worth interrupting for; it silently changes what every
+// agent is told.
 panel.send({
   ...base,
   plan: undefined,
-  project: { path: '/repo/.orchy.json', rules: [], warnings: ['.orchy.json is not valid JSON'] },
+  project: { path: '/repo/.orchy/config.json', rules: [], warnings: ['config.json is not valid JSON'] },
 });
-ok('a broken config says so', panel.grid.innerHTML.includes('not valid JSON'));
+ok('a broken config is surfaced', panel.grid.innerHTML.includes('not valid JSON'));
 
-// The setup checks come first: telling someone how to start a pipeline when
-// their backend is missing sends them off to fail for an unrelated reason.
+// Setup failures come first: telling someone how to start a pipeline when their
+// backend is missing sends them off to fail for an unrelated reason.
 panel.send({
   ...base,
   plan: undefined,
   project: { rules: [], warnings: [] },
   setup: [{ name: 'OpenCode installed', ok: false, detail: 'not found', fix: 'Install OpenCode' }],
 });
-ok('a broken machine is reported first', panel.grid.innerHTML.includes('Install OpenCode'));
-ok('and the wording changes to match', panel.grid.innerHTML.includes('Fix those first'));
+ok('a broken machine is reported', panel.grid.innerHTML.includes('Install OpenCode'));
+ok('and nothing is suggested until it is fixed', panel.grid.innerHTML.includes('cannot run until'));
 
 const broken = boot(source);
 broken.send({ ...base, plan: { summary: 'x', warnings: [], agents: null } });

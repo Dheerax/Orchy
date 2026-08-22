@@ -43,7 +43,7 @@ can never finish deciding.
 
 Call `orchy_project` and `orchy_models` before you plan.
 
-`orchy_project` returns this repository's own rules from its `.orchy.json`: the
+`orchy_project` returns this repository's own rules from its `.orchy/config.json`: the
 conventions every agent is given, the command their work has to pass, preferred
 models, and the budget. Those rules are already appended to every agent brief,
 so do not repeat them in tasks — but they change what a sensible plan looks

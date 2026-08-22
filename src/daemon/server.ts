@@ -174,7 +174,7 @@ export class DaemonServer {
             ? 'These are this repository\'s own rules. They are already appended to every ' +
               'agent brief, so do not repeat them in tasks — but do plan around them: a rule ' +
               'saying no new dependencies changes what a sensible plan looks like.'
-            : 'This project has no .orchy.json, so there are no house rules beyond what you ' +
+            : 'This project has no .orchy/config.json, so there are no house rules beyond what you ' +
               'can read in the code. Run "Orchy: Create Project Config" in VS Code to add one.',
         };
       }

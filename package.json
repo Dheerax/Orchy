@@ -1,8 +1,8 @@
 {
   "name": "orchy",
   "displayName": "Orchy",
-  "description": "Multi-agent coding orchestration for VS Code — a grid of isolated agents, driven by an orchestrator, with live topology.",
-  "version": "0.32.0",
+  "description": "Multi-agent coding orchestration for VS Code. An orchestrator plans a pipeline you approve; every agent runs in its own git worktree; you watch the branches diverge and merge.",
+  "version": "0.33.0",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -14,6 +14,8 @@
   },
   "categories": [
     "AI",
+    "SCM Providers",
+    "Visualization",
     "Other"
   ],
   "main": "./out/extension.js",
@@ -249,5 +251,27 @@
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.90.0",
     "typescript": "^5.4.0"
-  }
+  },
+  "keywords": [
+    "multi-agent",
+    "orchestration",
+    "agents",
+    "ai",
+    "worktree",
+    "git",
+    "opencode",
+    "mcp",
+    "pipeline",
+    "codegen"
+  ],
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0d1117",
+    "theme": "dark"
+  },
+  "homepage": "https://github.com/Dheerax/Orchy#readme",
+  "bugs": {
+    "url": "https://github.com/Dheerax/Orchy/issues"
+  },
+  "qna": false
 }

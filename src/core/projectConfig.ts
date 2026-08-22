@@ -45,7 +45,24 @@ export interface ProjectConfig {
   warnings: string[];
 }
 
-export const CONFIG_FILE = '.orchy.json';
+/** Relative to the workspace root. */
+export const CONFIG_FILE = '.orchy/config.json';
+
+/**
+ * What `.orchy/` should and should not carry into version control.
+ *
+ * The directory holds two unlike things: the config, which is a decision the
+ * team shares, and the event log, plans and daemon handshake, which are this
+ * machine's working state and would conflict on every pull. Rather than ask
+ * everyone to work that out, Orchy writes the rule down next to the files.
+ */
+const DIR_GITIGNORE = `# Orchy's working state. Local to this machine.
+*
+
+# Except the project's rules, which the team shares.
+!.gitignore
+!config.json
+`;
 
 /**
  * Remove `//` line comments so a hand-written config can be commented.
@@ -217,6 +234,25 @@ export function rulesBlock(config: ProjectConfig): string {
     `\n\nThis project's rules, which apply to everything you do here:\n` +
     config.rules.map((r) => `- ${r}`).join('\n')
   );
+}
+
+/**
+ * Create the config if it is not there, and make sure `.orchy/` knows what of
+ * itself belongs in git. Returns the path either way.
+ */
+export function ensureProjectConfig(root: string): string {
+  const file = path.join(root, CONFIG_FILE);
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const ignore = path.join(dir, '.gitignore');
+  if (!fs.existsSync(ignore)) {
+    fs.writeFileSync(ignore, DIR_GITIGNORE, 'utf8');
+  }
+  if (!fs.existsSync(file)) {
+    fs.writeFileSync(file, exampleConfig(), 'utf8');
+  }
+  return file;
 }
 
 /** A starting file, written on request rather than assumed. */
