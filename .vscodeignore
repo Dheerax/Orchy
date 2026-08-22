@@ -15,3 +15,4 @@ CONTRIBUTING.md
 .orchy/**
 docs/*.example.*
 media/logo.png
+docs/demo.html

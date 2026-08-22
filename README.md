@@ -52,6 +52,12 @@ Orchestrator (Claude Code, or any MCP client)
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design and what was
 deliberately deferred.
 
+## See it
+
+[**A 30-second walkthrough**](docs/demo.html) — one prompt becomes a pipeline you approve,
+five agents run on their own branches, and the branches fold back into main. Open the file
+in a browser; it plays on load.
+
 ## Quickstart
 
 You need [OpenCode](https://opencode.ai) on your `PATH` with at least one
