@@ -5,7 +5,7 @@ import { DeliverableVerifier } from './core/deliverableVerifier';
 import { Check, checkSetup, summarise } from './core/doctor';
 import { EventLog } from './core/eventLog';
 import { Orchestrator } from './core/orchestrator';
-import { CONFIG_FILE, ensureProjectConfig, loadProjectConfig } from './core/projectConfig';
+import { CONFIG_FILE, ensureProjectConfig } from './core/projectConfig';
 import { Planner } from './core/planner';
 import { SessionRegistry } from './core/sessionRegistry';
 import { Session } from './core/types';
@@ -17,8 +17,6 @@ import {
 import { DaemonServer } from './daemon/server';
 import { TranscriptDocumentProvider, TRANSCRIPT_SCHEME } from './ui/transcriptDocument';
 import { GraphPanel } from './ui/graphPanel';
-import { WorkspacePanel } from './ui/workspacePanel';
-import { SessionTreeProvider } from './ui/sessionTree';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -70,7 +68,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       backendName: backend.displayName,
       modelCount: () => orchestrator.refreshModels(),
     });
-    WorkspacePanel.refreshIfOpen();
+    GraphPanel.refreshIfOpen();
     return setupChecks;
   };
 
@@ -96,20 +94,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Bound before anything else touches the panel: this also claims the webview
   // tab VS Code restores when the window reopens, which would otherwise sit
   // there empty forever.
-  context.subscriptions.push(
-    ...WorkspacePanel.bind({
-      registry,
-      setup: () => setupChecks,
-      project: () => {
-        const p = loadProjectConfig(root);
-        return { path: p.path, rules: p.rules, verify: p.verify, warnings: p.warnings };
-      },
-      worktrees,
-      backend,
-      handleOf: (id) => orchestrator.handleOf(id),
-      onPlanDecision: decidePlan,
-    })
-  );
+  // One window, in the panel beside the terminal. Watching a single run used to
+  // mean a tree in the sidebar, a session panel at the bottom and a pipeline tab
+  // in the editor — three places showing three views of the same six agents.
+  context.subscriptions.push(GraphPanel.bind({ registry, worktrees }, decidePlan));
 
   const transcripts = new TranscriptDocumentProvider(registry, backend, (id) =>
     orchestrator.handleOf(id)
@@ -119,11 +107,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   const output = vscode.window.createOutputChannel('Orchy');
-  const tree = new SessionTreeProvider(registry);
   const version = String(context.extension.packageJSON.version ?? 'unknown');
   const daemon = new DaemonServer(registry, orchestrator, orchyDir, root, version);
 
-  context.subscriptions.push(tree.register(), {
+  context.subscriptions.push({
     dispose: () => {
       orchestrator.disposeAll();
       daemon.dispose();
@@ -159,7 +146,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // Said once, in the panel and the log, rather than as a modal. The panel
       // is where someone with nothing running is already looking.
       output.appendLine(`Orchy: ${trouble}`);
-      WorkspacePanel.show();
+      GraphPanel.show();
     }
   });
 
@@ -174,15 +161,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // awaiting a decision comes back with the window.
   const restored = planner.pending()[0];
   if (restored) {
-    WorkspacePanel.show();
-    WorkspacePanel.showPlan(restored);
+    GraphPanel.show();
+    GraphPanel.showPlan(restored);
     output.appendLine(`Restored plan ${restored.id}, still awaiting your decision.`);
   }
 
   daemon.onPlanProposed = (plan) => {
-    WorkspacePanel.showPlan(plan);
+    GraphPanel.showPlan(plan);
   };
-  daemon.onDiagnostics = () => WorkspacePanel.diagnostics();
+  daemon.onDiagnostics = () => GraphPanel.diagnostics();
 
   try {
     const port = await daemon.start();
@@ -197,7 +184,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // A spawn should put the workspace on screen, since it is the only surface
   // where the new agent will appear.
   orchestrator.on('spawned', () => {
-    WorkspacePanel.show();
+    GraphPanel.show();
   });
 
   const pick = async (placeHolder: string): Promise<string | undefined> => {
@@ -317,7 +304,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
 
     vscode.commands.registerCommand('orchy.showGraph', () =>
-      WorkspacePanel.show()
+      GraphPanel.show()
     ),
 
     vscode.commands.registerCommand('orchy.focusSession', (arg?: unknown) => {
@@ -327,7 +314,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       // Opens the session manager on that agent: roster on the left, everything
       // known about the one you picked on the right.
-      WorkspacePanel.inspect(id);
+      GraphPanel.show();
     }),
 
     vscode.commands.registerCommand('orchy.spawn', async () => {
@@ -595,19 +582,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         ...(trouble ? ['Show the panel'] : [])
       ).then((choice) => {
         if (choice) {
-          WorkspacePanel.show();
+          GraphPanel.show();
         }
       });
     }),
 
     vscode.commands.registerCommand('orchy.approvePlan', (id: string) => {
       decidePlan(id, 'approved');
-      WorkspacePanel.clearPlan(id);
+      GraphPanel.clearPlan(id);
     }),
 
     vscode.commands.registerCommand('orchy.rejectPlan', (id: string) => {
       decidePlan(id, 'rejected');
-      WorkspacePanel.clearPlan(id);
+      GraphPanel.clearPlan(id);
     }),
 
     vscode.commands.registerCommand('orchy.revisePlan', async (id: string) => {
@@ -618,7 +605,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
       if (feedback) {
         decidePlan(id, 'rejected', feedback);
-        WorkspacePanel.clearPlan(id);
+        GraphPanel.clearPlan(id);
       }
     }),
 

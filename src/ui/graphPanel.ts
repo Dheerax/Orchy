@@ -83,13 +83,71 @@ const LANE_COLORS = [
  * An interactive topological workflow DAG, a GitHub-style multi-lane visual git
  * commit/merge tree, live pipeline HUD, and deep-dive agent inspector drawer.
  */
+/**
+ * Where this window is drawing.
+ *
+ * It lives in the bottom panel beside the terminal, which VS Code calls a
+ * webview *view* — a different object from the webview *panel* an editor tab
+ * gets. Both are flattened to the few things this class needs.
+ */
+interface Surface {
+  readonly webview: vscode.Webview;
+  readonly visible: boolean;
+  reveal(): void;
+  setBadge(count: number): void;
+  onDidChangeVisibility(listener: () => void): vscode.Disposable;
+  onDidDispose(listener: () => void): vscode.Disposable;
+}
+
+function surfaceOfView(view: vscode.WebviewView): Surface {
+  return {
+    webview: view.webview,
+    get visible(): boolean {
+      return view.visible;
+    },
+    reveal: () => view.show(true),
+    setBadge: (count: number) => {
+      // The count of agents that need a human, on the view's own tab. It is the
+      // only part of this window that is legible while you are looking at
+      // something else.
+      view.badge = count > 0 ? { value: count, tooltip: `${count} need attention` } : undefined;
+    },
+    onDidChangeVisibility: (listener) => view.onDidChangeVisibility(listener),
+    onDidDispose: (listener) => view.onDidDispose(listener),
+  };
+}
+
+// Kept for the editor-tab route, which the command still offers for anyone who
+// wants this full-screen rather than in the panel.
+export function surfaceOfPanel(panel: vscode.WebviewPanel): Surface {
+  return {
+    webview: panel.webview,
+    get visible(): boolean {
+      return panel.visible;
+    },
+    reveal: () => panel.reveal(undefined, true),
+    setBadge: () => undefined,
+    onDidChangeVisibility: (listener) => panel.onDidChangeViewState(() => listener()),
+    onDidDispose: (listener) => panel.onDidDispose(listener),
+  };
+}
+
 export class GraphPanel {
+  /** Must match the view contributed to the panel container in package.json. */
+  static readonly viewId = 'orchy.workspaceView';
+
   private static current: GraphPanel | undefined;
+  private static deps: { registry: SessionRegistry; worktrees?: WorktreeManager } | undefined;
+  private static activePlan: import('../core/types').Plan | undefined;
+  private static onPlanDecision:
+    | ((id: string, decision: 'approved' | 'rejected', feedback?: string) => void)
+    | undefined;
+
   private disposables: vscode.Disposable[] = [];
   private pending: NodeJS.Timeout | undefined;
 
   private constructor(
-    private readonly panel: vscode.WebviewPanel,
+    private readonly panel: Surface,
     private readonly registry: SessionRegistry,
     private readonly worktrees?: WorktreeManager
   ) {
@@ -159,6 +217,26 @@ export class GraphPanel {
             this.registry.rebuild();
             this.push();
             break;
+          case 'approvePlan':
+          case 'rejectPlan':
+            if (msg.id) {
+              this.decide(msg.id, msg.type === 'approvePlan' ? 'approved' : 'rejected');
+            }
+            break;
+          case 'revisePlan': {
+            if (!msg.id) {
+              break;
+            }
+            const feedback = await vscode.window.showInputBox({
+              title: 'What should change about this plan?',
+              prompt: 'The orchestrator revises rather than guesses.',
+              placeHolder: 'e.g. the three validators should not depend on each other',
+            });
+            if (feedback) {
+              this.decide(msg.id, 'rejected', feedback);
+            }
+            break;
+          }
           case 'openConfig':
             await vscode.commands.executeCommand('orchy.createProjectConfig');
             break;
@@ -185,18 +263,16 @@ export class GraphPanel {
     const onChanged = (): void => this.schedulePush();
     this.registry.on('changed', onChanged);
 
-    this.panel.onDidChangeViewState(
-      () => {
+    this.disposables.push(
+      this.panel.onDidChangeVisibility(() => {
         if (this.panel.visible) {
           this.push();
         }
-      },
-      undefined,
-      this.disposables
+      })
     );
 
-    this.panel.onDidDispose(
-      () => {
+    this.disposables.push(
+      this.panel.onDidDispose(() => {
         this.registry.off('changed', onChanged);
         if (this.pending) {
           clearTimeout(this.pending);
@@ -204,25 +280,88 @@ export class GraphPanel {
         for (const d of this.disposables) {
           d.dispose();
         }
-        GraphPanel.current = undefined;
-      },
-      undefined,
-      this.disposables
+        if (GraphPanel.current === this) {
+          GraphPanel.current = undefined;
+        }
+      })
     );
   }
 
-  static show(registry: SessionRegistry, worktrees?: WorktreeManager): void {
+  /**
+   * Hand this window what it needs, and let VS Code build it in the panel.
+   *
+   * One window, beside the terminal. Watching a single run used to mean a tree
+   * in the sidebar, a session panel at the bottom and a pipeline tab in the
+   * editor — three places showing three views of the same six agents.
+   */
+  static bind(
+    deps: { registry: SessionRegistry; worktrees?: WorktreeManager },
+    onPlanDecision: (id: string, decision: 'approved' | 'rejected', feedback?: string) => void
+  ): vscode.Disposable {
+    GraphPanel.deps = deps;
+    GraphPanel.onPlanDecision = onPlanDecision;
+    return vscode.window.registerWebviewViewProvider(
+      GraphPanel.viewId,
+      {
+        resolveWebviewView(view: vscode.WebviewView): void {
+          GraphPanel.current = new GraphPanel(
+            surfaceOfView(view),
+            deps.registry,
+            deps.worktrees
+          );
+        },
+      },
+      { webviewOptions: { retainContextWhenHidden: true } }
+    );
+  }
+
+  static show(_registry?: SessionRegistry, _worktrees?: WorktreeManager): void {
     if (GraphPanel.current) {
-      GraphPanel.current.panel.reveal(undefined, false);
+      GraphPanel.current.panel.reveal();
+      GraphPanel.current.push();
       return;
     }
-    const panel = vscode.window.createWebviewPanel(
-      'orchy.graph',
-      'Orchy — Pipeline',
-      { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
-      { enableScripts: true, retainContextWhenHidden: false }
-    );
-    GraphPanel.current = new GraphPanel(panel, registry, worktrees);
+    void vscode.commands.executeCommand(`${GraphPanel.viewId}.focus`);
+  }
+
+  /** Put a proposed plan in front of the user before anything runs. */
+  static showPlan(plan: import('../core/types').Plan): void {
+    // Recorded first: opening the panel is a round trip, so the surface usually
+    // does not exist yet, and it reads this when it resolves a moment later.
+    GraphPanel.activePlan = plan;
+    GraphPanel.show();
+    GraphPanel.current?.panel.reveal();
+    GraphPanel.current?.push();
+  }
+
+  static clearPlan(id: string): void {
+    if (GraphPanel.activePlan?.id === id) {
+      GraphPanel.activePlan = undefined;
+      GraphPanel.current?.push();
+    }
+  }
+
+  static refreshIfOpen(): void {
+    GraphPanel.current?.schedulePush();
+  }
+
+  /** For surfaces that only need to know whether anything is drawing. */
+  static diagnostics(): Record<string, unknown> {
+    return {
+      open: Boolean(GraphPanel.current),
+      bound: Boolean(GraphPanel.deps),
+      visible: GraphPanel.current?.panel.visible ?? false,
+      plan_on_screen: GraphPanel.activePlan?.id,
+    };
+  }
+
+  private surfacePlan(): import('../core/types').Plan | undefined {
+    return GraphPanel.activePlan;
+  }
+
+  private decide(id: string, decision: 'approved' | 'rejected', feedback?: string): void {
+    GraphPanel.onPlanDecision?.(id, decision, feedback);
+    GraphPanel.clearPlan(id);
   }
 
   private async openDiff(sessionId: string, file: string): Promise<void> {
@@ -788,6 +927,7 @@ export class GraphPanel {
       totalSpend: sessions.reduce((sum, s) => sum + (s.budget?.costEstimate || 0), 0),
     };
 
+    this.panel.setBadge(this.registry.needingAttention().length);
     void this.panel.webview.postMessage({
       type: 'snapshot',
       data: {
@@ -795,6 +935,7 @@ export class GraphPanel {
         edges,
         gitTree,
         stats,
+        plan: this.surfacePlan(),
         showAllRuns: this.showAllRuns,
         runSize: sessions.length,
         totalSize: everything.length,
@@ -943,6 +1084,27 @@ export class GraphPanel {
     display: inline-flex; align-items: center; gap: 4px;
   }
   .aacts button:hover { color: var(--running); border-color: var(--running); }
+
+  /* A plan takes over the agents pane: it is a decision, not a notification. */
+  .planbar { display: flex; flex-direction: column; gap: 10px; }
+  .planhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .ptitle { font-size: 14px; font-weight: 600; color: var(--fg); }
+  .parity { font-size: 11px; color: var(--muted); }
+  .pstages { display: flex; flex-direction: column; gap: 10px; }
+  .pstage { display: flex; flex-direction: column; gap: 6px; }
+  .pstage-h { font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+              color: var(--muted); }
+  .pacts { display: flex; gap: 8px; padding-top: 2px; }
+  .pacts button {
+    border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
+    font-size: 12px; padding: 5px 14px; background: none; color: var(--fg);
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .pacts .go { border-color: var(--done); color: var(--done); }
+  .pacts .no:hover { border-color: var(--failed); color: var(--failed); }
+  .broke { border: 1px solid var(--blocked); border-left-width: 3px; border-radius: 8px;
+           padding: 7px 10px; background: color-mix(in srgb, var(--blocked) 8%, var(--card)); }
+  .bfix { font-size: 11.5px; line-height: 1.5; }
 
   #main-content {
     flex: 1 1 auto; display: flex; flex-direction: column;
@@ -1258,6 +1420,7 @@ export class GraphPanel {
     selectedNodeId: null,
     filter: '',
     viewMode: 'agents',
+    plan: null,
     sideBySide: false,
     zoom: 1,
     // Start fitted. Zooming in is a deliberate act, and returns to this.
@@ -1306,6 +1469,7 @@ export class GraphPanel {
       state.nodes = e.data.data.nodes || [];
       state.edges = e.data.data.edges || [];
       state.gitTree = e.data.data.gitTree || [];
+      state.plan = e.data.data.plan || null;
       state.showAllRuns = !!e.data.data.showAllRuns;
       state.runSize = e.data.data.runSize || 0;
       state.totalSize = e.data.data.totalSize || 0;
@@ -1510,7 +1674,77 @@ export class GraphPanel {
    * which agents exist, what each owes, and which of them is stuck — and it
    * belongs beside the diagram of the same run rather than in another window.
    */
+  /*
+   * A proposed pipeline, shown where the running one will be.
+   *
+   * A plan is the same thing as a run that has not started: the same agents,
+   * the same contracts, the same models. Drawing it in the same place means the
+   * shape you approved is literally the shape you then watch, rather than a
+   * diagram in one window and a list in another.
+   */
+  function planHtml(p) {
+    const warns = (p.warnings || []).map(w =>
+      '<div class="broke"><div class="bfix">' + esc(w) + '</div></div>').join('');
+
+    const stages = {};
+    (p.agents || []).forEach((a, i) => {
+      const depth = (a.dependsOn || []).length
+        ? Math.max(...a.dependsOn.map(d => (p.agents[d] ? (p.agents[d].dependsOn || []).length + 1 : 1)))
+        : 0;
+      (stages[depth] = stages[depth] || []).push({ a: a, i: i });
+    });
+
+    const rows = Object.keys(stages).sort((x, y) => x - y).map(depth => {
+      const group = stages[depth];
+      const cards = group.map(({ a }) => {
+        const provides = (a.provides || []).map(v => v.symbol).join(', ');
+        const needs = (a.needs || []).join(', ');
+        const deliv = (a.deliverables || []).map(d => d.spec).join(', ');
+        return '<div class="acard">' +
+          '<div class="ahead">' +
+            '<span class="adot" style="background:var(--running)"></span>' +
+            '<span class="aid">' + esc(a.role) + '</span>' +
+            '<span class="ameta">' +
+              (a.model ? '<span>' + esc(a.model.split('/').pop()) + '</span>' : '<span>default model</span>') +
+            '</span>' +
+          '</div>' +
+          '<div class="atask">' + esc(a.task || '') + '</div>' +
+          '<div class="adeliv">' +
+            (provides ? '<span class="deliv-chip v-yes">' + icon('check') + esc(provides) + '</span>' : '') +
+            (needs ? '<span class="deliv-chip v-no">' + icon('warn') + 'needs ' + esc(needs) + '</span>' : '') +
+            (deliv ? '<span class="deliv-chip">' + esc(deliv) + '</span>' : '') +
+          '</div>' +
+        '</div>';
+      }).join('');
+
+      return '<div class="pstage">' +
+        '<div class="pstage-h">Stage ' + (Number(depth) + 1) +
+          (group.length > 1 ? ' · ' + group.length + ' in parallel' : '') + '</div>' +
+        cards + '</div>';
+    }).join('');
+
+    return '<div class="planbar">' +
+      '<div class="planhead">' +
+        '<span class="ptitle">' + esc(p.summary) + '</span>' +
+        '<span class="parity">' + (p.agents || []).length + ' agents · nothing runs until you approve</span>' +
+      '</div>' +
+      warns +
+      '<div class="pstages">' + rows + '</div>' +
+      '<div class="pacts">' +
+        '<button class="go" data-plan="approvePlan" data-id="' + esc(p.id) + '">' +
+          icon('check', 'Approve and run') + '</button>' +
+        '<button data-plan="revisePlan" data-id="' + esc(p.id) + '">Request changes</button>' +
+        '<button class="no" data-plan="rejectPlan" data-id="' + esc(p.id) + '">Reject</button>' +
+      '</div>' +
+    '</div>';
+  }
+
   function renderAgents() {
+    if (state.plan) {
+      agentsCount.textContent = 'awaiting your approval';
+      agentsBody.innerHTML = planHtml(state.plan);
+      return;
+    }
     const filter = state.filter.toLowerCase();
     const shown = state.nodes.filter(n =>
       !filter || n.id.toLowerCase().includes(filter) ||
@@ -1876,6 +2110,12 @@ export class GraphPanel {
 
   // Event Listeners
   document.addEventListener('click', e => {
+    const planBtn = e.target.closest('[data-plan]');
+    if (planBtn) {
+      api.postMessage({ type: planBtn.dataset.plan, id: planBtn.dataset.id });
+      return;
+    }
+
     const actBtn = e.target.closest('[data-act]');
     if (actBtn) {
       const act = actBtn.dataset.act;

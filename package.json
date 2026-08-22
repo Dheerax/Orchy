@@ -2,7 +2,7 @@
   "name": "orchy",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code. An orchestrator plans a pipeline you approve; every agent runs in its own git worktree; you watch the branches diverge and merge.",
-  "version": "0.35.0",
+  "version": "0.36.0",
   "license": "MIT",
   "publisher": "orchy",
   "repository": {
@@ -24,13 +24,6 @@
   ],
   "contributes": {
     "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "orchy",
-          "title": "Orchy",
-          "icon": "media/orchy.svg"
-        }
-      ],
       "panel": [
         {
           "id": "orchyPanel",
@@ -40,28 +33,15 @@
       ]
     },
     "views": {
-      "orchy": [
-        {
-          "id": "orchy.sessions",
-          "name": "Sessions",
-          "contextualTitle": "Orchy"
-        }
-      ],
       "orchyPanel": [
         {
           "id": "orchy.workspaceView",
           "type": "webview",
-          "name": "Sessions",
+          "name": "Orchy",
           "contextualTitle": "Orchy"
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "orchy.sessions",
-        "contents": "No agent sessions yet.\n\nEach session runs in its own git worktree and appears in the editor grid.\n\n[Spawn an agent](command:orchy.spawn)\n[Set up workspace layout](command:orchy.setupLayout)\n\nOr let an orchestrator drive it through the orchy-mcp tools."
-      }
-    ],
     "commands": [
       {
         "command": "orchy.spawn",
@@ -141,83 +121,7 @@
         "title": "Orchy: Open Workspace"
       }
     ],
-    "menus": {
-      "commandPalette": [
-        {
-          "command": "orchy.focusSession",
-          "when": "false"
-        }
-      ],
-      "view/title": [
-        {
-          "command": "orchy.spawn",
-          "when": "view == orchy.sessions",
-          "group": "navigation@1"
-        },
-        {
-          "command": "orchy.showGraph",
-          "when": "view == orchy.sessions",
-          "group": "navigation@2"
-        },
-        {
-          "command": "orchy.purgeAll",
-          "when": "view == orchy.sessions",
-          "group": "1_clear@1"
-        },
-        {
-          "command": "orchy.pruneWorktrees",
-          "when": "view == orchy.sessions",
-          "group": "1_clear@2"
-        },
-        {
-          "command": "orchy.showPipeline",
-          "when": "view == orchy.sessions",
-          "group": "navigation@3"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "orchy.verify",
-          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
-          "group": "inline@1"
-        },
-        {
-          "command": "orchy.purge",
-          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
-          "group": "inline@2"
-        },
-        {
-          "command": "orchy.merge",
-          "when": "view == orchy.sessions && viewItem == orchySession.complete",
-          "group": "1_act@1"
-        },
-        {
-          "command": "orchy.kill",
-          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
-          "group": "9_danger@1"
-        },
-        {
-          "command": "orchy.archive",
-          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
-          "group": "9_danger@2"
-        },
-        {
-          "command": "orchy.purge",
-          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
-          "group": "9_danger@3"
-        },
-        {
-          "command": "orchy.openTranscript",
-          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
-          "group": "1_act@2"
-        },
-        {
-          "command": "orchy.openTerminal",
-          "when": "view == orchy.sessions && viewItem =~ /^orchySession/",
-          "group": "1_act@1"
-        }
-      ]
-    },
+    "menus": {},
     "configuration": {
       "title": "Orchy",
       "properties": {
