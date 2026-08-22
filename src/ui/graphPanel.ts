@@ -986,7 +986,9 @@ export class GraphPanel {
   }
   #git-graph .node { cursor: pointer; }
   #git-graph .node:hover circle, #git-graph .node:hover rect { stroke: var(--fg); }
-  #git-graph .tick { font-size: 8.5px; fill: var(--muted); opacity: .75; }
+  #git-graph .tick { font-size: 8.5px; fill: var(--muted); opacity: .7; }
+  #git-graph .step { font-size: 9px; fill: var(--muted); }
+  #git-graph .node.on .step, #git-graph .node:hover .step { fill: var(--fg); }
 
   /* One commit's detail, for the one you picked. Forty rows of it was what
      made the old list taller than the graph it was meant to annotate. */
@@ -1383,7 +1385,7 @@ export class GraphPanel {
     // The panel hands these over newest first; a timeline reads the other way.
     const cols = matching.slice().reverse();
 
-    const COL = 46, LANE_H = 34, PADX = 92, PADY = 24, DOT = 5.2, BEND = 20;
+    const COL = 78, LANE_H = 30, PADX = 96, PADY = 22, DOT = 5.2;
     let maxLane = 0;
     for (const c of cols) {
       for (const l of (c.activeLanes || [0])) {
@@ -1393,7 +1395,7 @@ export class GraphPanel {
     }
 
     const W = PADX + cols.length * COL + 28;
-    const H = PADY * 2 + maxLane * LANE_H + 10;
+    const H = PADY * 2 + maxLane * LANE_H + 26;
     const cx = i => PADX + i * COL;
     const cy = l => PADY + l * LANE_H;
 
@@ -1413,14 +1415,36 @@ export class GraphPanel {
       }
     });
 
+    /*
+     * One cubic from lane to lane, with its control points pushed out along the
+     * horizontal.
+     *
+     * The previous version ran flat and then turned inside a fixed 20 pixels.
+     * A branch six lanes down has to fall 180 pixels, so that turn was a right
+     * angle with a rounded corner rather than a curve — the whole reason these
+     * diagrams read well is that the departure is gradual.
+     */
     const curve = (x1, y1, x2, y2, color) => {
-      const bend = Math.min(BEND, Math.abs(x2 - x1));
-      const xTurn = x1 < x2 ? x2 - bend : x2 + bend;
-      const c1 = x1 < x2 ? x2 - bend * 0.45 : x2 + bend * 0.45;
-      return '<path d="M' + x1 + ' ' + y1 + ' L' + xTurn + ' ' + y1 +
-        ' C' + c1 + ' ' + y1 + ',' + x2 + ' ' + y1 + ',' + x2 + ' ' + y2 +
-        '" fill="none" stroke="' + color + '" stroke-width="2.2" ' +
-        'stroke-linecap="round" stroke-linejoin="round"/>';
+      const k = Math.max(16, Math.abs(x2 - x1) * 0.55);
+      const dir = x2 > x1 ? 1 : -1;
+      return '<path d="M' + x1 + ' ' + y1 +
+        ' C' + (x1 + k * dir) + ' ' + y1 + ',' + (x2 - k * dir) + ' ' + y2 + ',' +
+        x2 + ' ' + y2 + '" fill="none" stroke="' + color + '" stroke-width="2.2" ' +
+        'stroke-linecap="round"/>';
+    };
+
+    /** What happened here, in the few characters a column is wide. */
+    const stepLabel = (c) => {
+      if (c.kind === 'fork') return 'branched';
+      // Plain string work on purpose: a regex escape inside this template
+      // literal loses its backslash on the way out and stops being a regex.
+      if (c.kind === 'merge') return 'merged ' + String(c.branch || '').split('/').pop();
+      if (c.kind === 'closed') return 'archived';
+      if (c.kind === 'milestone') {
+        const spec = (c.deliverables || []).find(d => d.verified);
+        return spec ? (String(spec.spec).split('/').pop() || 'verified') : 'verified';
+      }
+      return String(c.status || '').replace('_', ' ') || 'update';
     };
 
     let g = '';
@@ -1443,9 +1467,9 @@ export class GraphPanel {
     // Where branches leave main and where they come back.
     cols.forEach((c, i) => {
       if (c.kind === 'fork' && c.lane > 0) {
-        g += curve(cx(i) - COL * 0.55, cy(0), cx(i), cy(c.lane), laneColor(c.lane));
+        g += curve(cx(i) - COL * 0.92, cy(0), cx(i), cy(c.lane), laneColor(c.lane));
       } else if (c.kind === 'merge' && c.fromLane > 0) {
-        g += curve(cx(i) - COL * 0.55, cy(c.fromLane), cx(i), cy(0), laneColor(c.fromLane));
+        g += curve(cx(i) - COL * 0.92, cy(c.fromLane), cx(i), cy(0), laneColor(c.fromLane));
       }
     });
 
@@ -1473,20 +1497,32 @@ export class GraphPanel {
           (c.kind === 'fork' ? DOT : DOT - 1.2) + '" fill="' + col +
           '" stroke="var(--bg)" stroke-width="2"/>';
       }
-      g += '<g class="node" data-id="' + esc(c.sessionId) + '" data-commit="' + esc(c.id) + '">' +
+      // The label belongs on the step, not only in the strip below: a row of
+      // identical circles on main tells you five merges happened and nothing
+      // about which branches they were.
+      const label = '<text class="step" x="' + x + '" y="' + (y + 15) +
+        '" text-anchor="middle">' + esc(fit(stepLabel(c), COL - 6, 4.5)) + '</text>';
+      g += '<g class="node' + (on ? ' on' : '') + '" data-id="' + esc(c.sessionId) +
+        '" data-commit="' + esc(c.id) + '">' +
         (on ? '<circle cx="' + x + '" cy="' + y + '" r="' + (DOT + 5) +
               '" fill="none" stroke="' + col + '" stroke-width="1.2" opacity=".55"/>' : '') +
-        shape + '<title>' + esc(c.title + ' · ' + c.relativeTime) + '</title></g>';
+        shape + label +
+        '<title>' + esc(c.title + ' · ' + c.relativeTime +
+          (c.detail ? '\\n' + c.detail : '')) + '</title></g>';
     });
 
     // A time ruler along the bottom, so the spacing means something.
-    for (let i = 0; i < cols.length; i += Math.max(1, Math.ceil(cols.length / 8))) {
+    const every = cols.length > 22 ? Math.ceil(cols.length / 18) : 1;
+    for (let i = 0; i < cols.length; i += every) {
       g += '<text class="tick" x="' + cx(i) + '" y="' + (H - 2) + '" text-anchor="middle">' +
-        esc(cols[i].relativeTime) + '</text>';
+        esc(cols[i].time) + '</text>';
     }
 
+    // Fit the pane, but not past the point where the step labels stop being
+    // readable — beyond that the timeline scrolls, which is what a timeline
+    // does.
     const avail = Math.max(240, gitGraph.clientWidth - 8);
-    const scale = W > avail ? Math.max(0.62, avail / W) : 1;
+    const scale = W > avail ? Math.max(0.82, avail / W) : 1;
     gitGraph.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' +
       Math.round(W * scale) + '" height="' + Math.round(H * scale) + '">' + g + '</svg>';
 
