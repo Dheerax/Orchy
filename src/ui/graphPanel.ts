@@ -1538,14 +1538,6 @@ export class GraphPanel {
   function render() {
     drawToolbar();
     if (firstPaint) {
-    if (state.plan) {
-      agentsPane.classList.add('on');
-      const main = document.getElementById('main-content');
-      if (main) main.style.display = 'none';
-      document.querySelectorAll('.mode-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.view === 'agents');
-      });
-    } else if (firstPaint) {
       firstPaint = false;
       agentsPane.classList.add('on');
       const main = document.getElementById('main-content');

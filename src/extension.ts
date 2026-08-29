@@ -298,6 +298,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       // A real terminal running the backend's own TUI: interactive, so you can
       // type at the agent, which the transcript view deliberately cannot do.
+      // A real interactive terminal executing the backend attach command in the user's shell
+      const cmdArgs = attach.args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ');
+      const isPowershell = process.platform === 'win32';
+      const fullCmd = isPowershell ? `& "${attach.command}" ${cmdArgs}` : `"${attach.command}" ${cmdArgs}`;
       const terminal = vscode.window.createTerminal({
         name: `${session.id} · ${session.role}`,
         location: side
@@ -314,6 +318,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
       terminal.show(false);
       output.appendLine(`[${target}] terminal: ${attach.command} ${attach.args.join(' ')}`);
+      terminal.sendText(fullCmd);
+      if (!side) {
+        void vscode.commands.executeCommand('workbench.action.terminal.focus');
+      }
+      output.appendLine(`[${target}] terminal: ${fullCmd}`);
     }),
 
     vscode.commands.registerCommand('orchy.openTerminalGrid', async () => {
@@ -336,6 +345,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       for (let i = 0; i < active.length; i++) {
         const session = active[i];
         const handle = orchestrator.handleOf(session.id);
+        let handle = orchestrator.handleOf(session.id);
+        if (!handle && session?.backend.handle && session.worktree) {
+          handle = { id: session.backend.handle, directory: session.worktree.path };
+        }
         if (!handle) {
           continue;
         }
@@ -344,6 +357,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           continue;
         }
         const column = (i % 4) + 1;
+        const cmdArgs = attach.args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ');
+        const isPowershell = process.platform === 'win32';
+        const fullCmd = isPowershell ? `& "${attach.command}" ${cmdArgs}` : `"${attach.command}" ${cmdArgs}`;
         const terminal = vscode.window.createTerminal({
           name: `${session.id} · ${session.role}`,
           location: { viewColumn: column, preserveFocus: false },
@@ -355,6 +371,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           env: { TERM: 'xterm-256color' },
         });
         terminal.show(false);
+        terminal.sendText(fullCmd);
       }
     }),
 
@@ -739,58 +756,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
      */
     vscode.commands.registerCommand('orchy.openWorkspace', () => GraphPanel.show()),
     vscode.commands.registerCommand('orchy.openInEditor', () => GraphPanel.openInEditor())
-    vscode.commands.registerCommand('orchy.openInEditor', () => GraphPanel.openInEditor()),
-    vscode.commands.registerCommand('orchy.proposeDemoPlan', async () => {
-      const plan = planner.propose('Pluggable Event Sinks & Routing', [
-        {
-          role: 'contract',
-          task: 'Define EventSink interface and payload types',
-          model: 'anthropic/claude-3-7-sonnet',
-          dependsOn: [],
-          provides: [{ symbol: 'EventSink', file: 'src/sinks/contract.ts' }],
-          needs: [],
-          deliverables: [{ kind: 'file', spec: 'src/sinks/contract.ts', verified: false }],
-        },
-        {
-          role: 'console-sink',
-          task: 'Implement structured stdout console sink',
-          model: 'openai/gpt-4o',
-          dependsOn: [0],
-          provides: [],
-          needs: ['EventSink'],
-          deliverables: [{ kind: 'file', spec: 'src/sinks/consoleSink.ts', verified: false }],
-        },
-        {
-          role: 'file-sink',
-          task: 'Implement rotating JSONL disk logger',
-          model: 'google/gemini-2.5-pro',
-          dependsOn: [0],
-          provides: [],
-          needs: ['EventSink'],
-          deliverables: [{ kind: 'file', spec: 'src/sinks/fileSink.ts', verified: false }],
-        },
-        {
-          role: 'memory-sink',
-          task: 'Implement fast in-memory buffer ring',
-          model: 'agy/default',
-          dependsOn: [0],
-          provides: [],
-          needs: ['EventSink'],
-          deliverables: [{ kind: 'file', spec: 'src/sinks/memorySink.ts', verified: false }],
-        },
-        {
-          role: 'router',
-          task: 'Fan out events to registered sinks and run integration tests',
-          model: 'google/gemini-2.5-flash',
-          dependsOn: [1, 2, 3],
-          provides: [],
-          needs: ['EventSink'],
-          deliverables: [{ kind: 'command', spec: 'npm test', verified: false }],
-        },
-      ]);
-      GraphPanel.showPlan(plan);
-      output.appendLine(`Proposed demo pipeline plan ${plan.id} (${plan.agents.length} agents) in the panel.`);
-    })
   );
 }
 

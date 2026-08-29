@@ -1670,6 +1670,8 @@ function play(i) {
 
   if (isPlaying && curIdx < SCENES.length - 1) {
     timer = setTimeout(() => play(curIdx + 1), s.ms / playbackSpeed);
+  } else if (isPlaying && curIdx === SCENES.length - 1) {
+    timer = setTimeout(() => play(0), 4500 / playbackSpeed);
   }
 }
 
