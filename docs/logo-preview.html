@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orchy · Master Logo & Micro-Detail Inspection</title>
+  <style>
+    :root {
+      --bg: #141416;
+      --card-bg: #1a1a1e;
+      --border: rgba(255, 255, 255, 0.08);
+      --text: #f0f6fc;
+      --dim: #8b949e;
+      --cyan: #38bdf8;
+      --green: #3fb950;
+      --purple: #bc8cff;
+      --amber: #f59e0b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 32px;
+      max-width: 680px;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #ffffff 40%, var(--dim) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    p.subtitle {
+      color: var(--dim);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .preview-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 32px;
+      justify-content: center;
+      align-items: center;
+      max-width: 1100px;
+      width: 100%;
+    }
+
+    .main-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 32px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6);
+      position: relative;
+    }
+
+    .logo-hero-wrap {
+      width: 360px;
+      height: 360px;
+      border-radius: 20px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+    }
+
+    .logo-hero-wrap:hover {
+      transform: scale(1.02);
+    }
+
+    .logo-hero-wrap img, .logo-hero-wrap svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .controls-row {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .btn {
+      background: #25252b;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .btn:hover {
+      background: #2e2e36;
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn.primary {
+      background: linear-gradient(135deg, #238636, #2ea043);
+      border-color: #3fb950;
+      color: #fff;
+    }
+
+    .variants-column {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      min-width: 320px;
+    }
+
+    .size-strip {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .size-strip-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--dim);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .sizes-flex {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .size-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .size-item span {
+      font-size: 11px;
+      color: var(--dim);
+      font-family: monospace;
+    }
+
+    .feature-points {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 13px;
+      color: #c9d1d9;
+    }
+
+    .feature-point {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .feature-point .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-top: 6px;
+      background: var(--cyan);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Orchy · Master Brand Mark</h1>
+    <p class="subtitle">Minimalist at a glance. Precision-machined micro-detailing up close. Designed strictly in Dark Charcoal / Neutral Slate.</p>
+  </header>
+
+  <div class="preview-container">
+    
+    <!-- Large Main Inspection Card -->
+    <div class="main-card">
+      <div class="logo-hero-wrap" id="hero-logo">
+        <object data="../media/master-logo.svg" type="image/svg+xml" style="width:100%;height:100%;pointer-events:none;"></object>
+      </div>
+
+      <div class="controls-row">
+        <button class="btn" id="btn-zoom-in">🔍 Zoom 2x</button>
+        <button class="btn" id="btn-zoom-reset">Reset</button>
+      </div>
+    </div>
+
+    <!-- Scaled Context Strip & Feature Notes -->
+    <div class="variants-column">
+
+      <div class="size-strip">
+        <div class="size-strip-title">Marketplace & UI Scale Test</div>
+        <div class="sizes-flex">
+          <div class="size-item">
+            <div style="width:128px;height:128px;border-radius:28px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);">
+              <object data="../media/master-logo.svg" type="image/svg+xml" style="width:100%;height:100%;pointer-events:none;"></object>
+            </div>
+            <span>128×128 (Marketplace)</span>
+          </div>
+
+          <div class="size-item">
+            <div style="width:64px;height:64px;border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);">
+              <object data="../media/master-logo.svg" type="image/svg+xml" style="width:100%;height:100%;pointer-events:none;"></object>
+            </div>
+            <span>64×64 (App Icon)</span>
+          </div>
+
+          <div class="size-item">
+            <div style="width:32px;height:32px;border-radius:7px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);">
+              <object data="../media/master-logo.svg" type="image/svg+xml" style="width:100%;height:100%;pointer-events:none;"></object>
+            </div>
+            <span>32×32 (Activity Bar)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature-points">
+        <div class="feature-point">
+          <div class="dot" style="background:var(--purple);"></div>
+          <div><strong>Symphony Nexus & Monogram:</strong> The letter <strong>O</strong> emerges as an interconnected loop of 4 parallel Git worktree lanes.</div>
+        </div>
+        <div class="feature-point">
+          <div class="dot" style="background:var(--green);"></div>
+          <div><strong>Deliverables & Nodes:</strong> Precision commit pips along each agent's track show origin, branches, step checkpoints, and verified merge.</div>
+        </div>
+        <div class="feature-point">
+          <div class="dot" style="background:var(--cyan);"></div>
+          <div><strong>Laser-Etched Calibrations:</strong> 36 calibrated dial tick marks around the bevel ring, sub-degree coordinates, and technical telemetry.</div>
+        </div>
+        <div class="feature-point">
+          <div class="dot" style="background:var(--amber);"></div>
+          <div><strong>Pure Dark Neutral:</strong> Rendered on #161618 dark matte charcoal. Zero blue tints.</div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    const hero = document.getElementById('hero-logo');
+    let scale = 1;
+
+    document.getElementById('btn-zoom-in').addEventListener('click', () => {
+      scale = scale === 1 ? 2.2 : 1;
+      hero.style.transform = scale === 1 ? 'none' : 'scale(' + scale + ')';
+    });
+
+    document.getElementById('btn-zoom-reset').addEventListener('click', () => {
+      scale = 1;
+      hero.style.transform = 'none';
+    });
+  </script>
+
+</body>
+</html>
