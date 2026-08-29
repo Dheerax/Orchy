@@ -121,6 +121,11 @@
       {
         "command": "orchy.cleanupTerminals",
         "title": "Orchy: Close Stale Agent Terminals"
+      },
+      {
+        "command": "orchy.proposeDemoPlan",
+        "title": "Orchy: Propose Demo Pipeline Plan",
+        "icon": "$(play)"
       }
     ],
     "menus": {
