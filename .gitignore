@@ -5,5 +5,8 @@ out/
 .orchy/
 *.log
 .env
+.env.*
 .DS_Store
-*.vsix
+Thumbs.db
+Screenshots/
+.vscode/settings.json

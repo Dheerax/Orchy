@@ -8,7 +8,7 @@ import { Orchestrator } from './core/orchestrator';
 import { CONFIG_FILE, ensureProjectConfig } from './core/projectConfig';
 import { Planner } from './core/planner';
 import { SessionRegistry } from './core/sessionRegistry';
-import { Session } from './core/types';
+import { OrchyEvent, Session } from './core/types';
 import {
   WorktreeDirtyError,
   WorktreeLockedError,
@@ -48,6 +48,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Before anything reads state: this window owns no terminals and no backend
   // handles, whatever the log says a previous window was doing.
   registry.reconcileForFreshWindow();
+
+  /*
+   * Off by default: normally an agent runs headless and a terminal is
+   * something you deliberately attach, per the design note above — an
+   * extension rearranging the editor the moment it has something to say is
+   * hostile. This exists for recording a run, where watching each agent's
+   * terminal appear live is the point.
+   *
+   * The listener is always on; the setting is read fresh on every event
+   * rather than captured once at startup. Reading it once was the bug: the
+   * toggle in the Orchy panel (below) flips this same setting, and a value
+   * only checked at activation cannot react to that without a window
+   * reload — which defeats the point of a live toggle for a live recording.
+   */
+  const autoOpenedTerminals = new Set<string>();
+  registry.on('event', (event: OrchyEvent) => {
+    if (
+      event.type === 'status' &&
+      event.status === 'running' &&
+      !autoOpenedTerminals.has(event.session) &&
+      vscode.workspace.getConfiguration('orchy').get<boolean>('autoOpenTerminals', false)
+    ) {
+      autoOpenedTerminals.add(event.session);
+      void vscode.commands.executeCommand('orchy.openTerminal', event.session, true);
+    }
+  });
 
   /*
    * Whether this machine can run anything, cached.
@@ -278,6 +304,62 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
       terminal.show(false);
       output.appendLine(`[${target}] terminal: ${attach.command} ${attach.args.join(' ')}`);
+    }),
+
+    vscode.commands.registerCommand('orchy.openTerminalGrid', async () => {
+      const active = registry.all().filter((s) => s.status !== 'archived');
+      if (active.length === 0) {
+        void vscode.window.showInformationMessage('Orchy: No active agent sessions to open terminals for.');
+        return;
+      }
+      if (active.length > 2) {
+        await vscode.commands.executeCommand('vscode.setEditorLayout', {
+          orientation: 0,
+          groups: [{ groups: [{}, {}], size: 0.5 }, { groups: [{}, {}], size: 0.5 }],
+        });
+      } else if (active.length === 2) {
+        await vscode.commands.executeCommand('vscode.setEditorLayout', {
+          orientation: 0,
+          groups: [{ size: 0.5 }, { size: 0.5 }],
+        });
+      }
+      for (let i = 0; i < active.length; i++) {
+        const session = active[i];
+        const handle = orchestrator.handleOf(session.id);
+        if (!handle) {
+          continue;
+        }
+        const attach = backend.attachCommand(handle);
+        if (!attach) {
+          continue;
+        }
+        const column = (i % 4) + 1;
+        const terminal = vscode.window.createTerminal({
+          name: `${session.id} · ${session.role}`,
+          location: { viewColumn: column, preserveFocus: false },
+          cwd: session.worktree?.path,
+          shellPath: attach.command,
+          shellArgs: attach.args,
+          iconPath: new vscode.ThemeIcon('robot'),
+          isTransient: true,
+          env: { TERM: 'xterm-256color' },
+        });
+        terminal.show(false);
+      }
+    }),
+
+    /*
+     * Flips orchy.autoOpenTerminals, and nothing else — the listener above
+     * always reads it live, so this takes effect on the very next agent that
+     * starts, no reload needed. Workspace-scoped: turning this on to record
+     * one project should not silently turn it on for every other project too.
+     */
+    vscode.commands.registerCommand('orchy.toggleAutoOpenTerminals', async () => {
+      const cfg = vscode.workspace.getConfiguration('orchy');
+      const next = !cfg.get<boolean>('autoOpenTerminals', false);
+      await cfg.update('autoOpenTerminals', next, vscode.ConfigurationTarget.Workspace);
+      output.appendLine(`Orchy: auto-open terminals ${next ? 'on' : 'off'}.`);
+      GraphPanel.refreshIfOpen();
     }),
 
     /*
@@ -645,7 +727,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
      * ask of them, and it stopped being necessary once the agents, the diagram
      * and the history shared a single tab.
      */
-    vscode.commands.registerCommand('orchy.openWorkspace', () => GraphPanel.show())
+    vscode.commands.registerCommand('orchy.openWorkspace', () => GraphPanel.show()),
+    vscode.commands.registerCommand('orchy.openInEditor', () => GraphPanel.openInEditor())
   );
 }
 

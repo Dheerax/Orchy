@@ -217,9 +217,17 @@ export class DaemonServer {
         // "still proposed", which reads to an orchestrator as "try again" — and
         // a proposal loop replaces the plan the user is mid-way through reading,
         // over and over, so they can never finish deciding.
+        //
+        // Ceiling well under 300s: this response rides one held-open HTTP
+        // request, and Node's own fetch (undici) aborts a request with no
+        // response after 300s of inactivity — a generic "fetch failed" with no
+        // indication the daemon was still alive and the plan still sitting
+        // there. A caller that wants to wait longer than the ceiling calls
+        // orchy_plan again immediately; that costs nothing but another round
+        // trip, unlike the alternative of a request that silently dies.
         const decided = await this.orchestrator.planner.awaitDecision(
           plan.id,
-          Math.min(Math.max(Number(body.timeout_seconds ?? 600), 60), 1800) * 1000
+          Math.min(Math.max(Number(body.timeout_seconds ?? 90), 60), 240) * 1000
         );
         if (decided?.status === 'approved') {
           const sessions = await this.orchestrator.runPlan(decided);
@@ -274,7 +282,7 @@ export class DaemonServer {
       case '/wait':
         return this.wait(
           Array.isArray(body.session_ids) ? body.session_ids.map(String) : undefined,
-          typeof body.timeout_seconds === 'number' ? body.timeout_seconds : 300
+          typeof body.timeout_seconds === 'number' ? body.timeout_seconds : 90
         );
 
       case '/fork': {
@@ -411,9 +419,13 @@ export class DaemonServer {
           finish('ready');
         }
       };
+      // Same 240s ceiling as /plan, for the same reason: Node's fetch aborts a
+      // still-open request after 300s with a bare "fetch failed", indistinguishable
+      // from the daemon actually being gone. A caller wanting to wait longer just
+      // calls orchy_wait again — the block resumes at once, nothing is missed.
       const timer = setTimeout(
         () => finish('timeout'),
-        Math.min(Math.max(timeoutSeconds, 1), 600) * 1000
+        Math.min(Math.max(timeoutSeconds, 1), 240) * 1000
       );
       this.registry.on('changed', onChanged);
     });

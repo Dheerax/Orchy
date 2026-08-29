@@ -196,7 +196,14 @@ const TOOLS = [
             required: ['role', 'task'],
           },
         },
-        timeout_seconds: { type: 'number', description: 'How long to await approval. Default 600.' },
+        timeout_seconds: {
+          type: 'number',
+          description:
+            'How long to await approval, in seconds. Default 90, max 240 — this holds one ' +
+            'connection open, and Node fetch clients time those out past 300s. If it comes ' +
+            'back still "proposed", call this again (or orchy_plan_status) rather than waiting ' +
+            'longer in one call.',
+        },
       },
       required: ['summary', 'agents'],
     },
@@ -300,7 +307,9 @@ const TOOLS = [
         },
         timeout_seconds: {
           type: 'number',
-          description: 'Give up after this long and report current state. Default 300, max 600.',
+          description:
+            'Give up after this long and report current state. Default 90, max 240 — call ' +
+            'this again on timeout to keep waiting; it is not a sleep, it blocks again at once.',
         },
       },
     },

@@ -192,6 +192,7 @@ retry; a dead server fails the same way forever.
 | `orchy.baseBranch` | `main` | Branch worktrees cut from and merge into |
 | `orchy.autoMerge` | `false` | Merge a verified session when nothing is ambiguous |
 | `orchy.globalBudgetCap` | `0` | Stop a session past this spend. `0` disables |
+| `orchy.autoOpenTerminals` | `false` | Open each agent's terminal the moment it starts running, instead of on demand |
 
 ## Design decisions worth knowing
 

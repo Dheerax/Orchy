@@ -237,6 +237,9 @@ export class GraphPanel {
           case 'openConfig':
             await vscode.commands.executeCommand('orchy.createProjectConfig');
             break;
+          case 'openInEditor':
+            await vscode.commands.executeCommand('orchy.openInEditor');
+            break;
           case 'inspectAgent':
             if (msg.id) {
               await vscode.commands.executeCommand('orchy.focusSession', msg.id);
@@ -245,6 +248,9 @@ export class GraphPanel {
           case 'toggleScope':
             this.showAllRuns = !this.showAllRuns;
             this.push();
+            break;
+          case 'toggleAutoTerminals':
+            await vscode.commands.executeCommand('orchy.toggleAutoOpenTerminals');
             break;
           case 'diff':
             if (msg.id && msg.file) {
@@ -319,6 +325,32 @@ export class GraphPanel {
       return;
     }
     void vscode.commands.executeCommand(`${GraphPanel.viewId}.focus`);
+  }
+
+  static openInEditor(): void {
+    if (!GraphPanel.deps) {
+      return;
+    }
+    const panel = vscode.window.createWebviewPanel(
+      'orchy.editorTab',
+      'Orchy',
+      vscode.ViewColumn.Active,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+      }
+    );
+    try {
+      panel.iconPath = vscode.Uri.file(path.join(__dirname, '..', '..', 'media', 'orchy.svg'));
+    } catch {
+      // Icon optional
+    }
+    const gp = new GraphPanel(
+      surfaceOfPanel(panel),
+      GraphPanel.deps.registry,
+      GraphPanel.deps.worktrees
+    );
+    gp.push();
   }
 
   /** Put a proposed plan in front of the user before anything runs. */
@@ -936,6 +968,9 @@ export class GraphPanel {
         showAllRuns: this.showAllRuns,
         runSize: sessions.length,
         totalSize: everything.length,
+        autoOpenTerminals: vscode.workspace
+          .getConfiguration('orchy')
+          .get<boolean>('autoOpenTerminals', false),
       },
     });
   }
@@ -1330,7 +1365,9 @@ export class GraphPanel {
     <input type="text" id="search" class="search-box" placeholder="Filter">
     <button class="tbtn" id="scope-btn" data-act="toggleScope" title="Show only the run in progress, or everything this workspace has ever run"></button>
     <button class="tbtn primary" data-act="spawn" title="Spawn an agent"></button>
+    <button class="tbtn icon-only" data-act="openInEditor" title="Open Orchy in main editor window"></button>
     <button class="tbtn icon-only" id="layout-btn" data-layout="toggle" title="Stack the two views, or set them side by side"></button>
+    <button class="tbtn icon-only" id="auto-term-btn" data-act="toggleAutoTerminals" title="Open each agent's terminal automatically as it starts running — for watching or recording a run live"></button>
     <button class="tbtn icon-only" data-act="openConfig" title="This project's rules for agents"></button>
     <button class="tbtn icon-only" data-act="cleanupTerminals" title="Close terminals whose agents are gone"></button>
     <button class="tbtn icon-only" data-act="refresh" title="Rebuild from the event log"></button>
@@ -1402,6 +1439,7 @@ export class GraphPanel {
   const gitGraph = document.getElementById('git-graph');
   const gitDetail = document.getElementById('git-detail');
   const scopeBtn = document.getElementById('scope-btn');
+  const autoTermBtn = document.getElementById('auto-term-btn');
   const commitCount = document.getElementById('commit-count');
   const searchInput = document.getElementById('search');
   const drawer = document.getElementById('inspector-drawer');
@@ -1451,6 +1489,7 @@ export class GraphPanel {
     zoomIn: 'M8 4v8M4 8h8',
     zoomOut: 'M4 8h8',
     fit: 'M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10',
+    popout: 'M3 3h5v2H5v6h6V9h2v5H3V3zm7 0h4v4h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H10V3z',
   };
 
   /** An icon at text size, optionally with a label beside it. */
@@ -1470,6 +1509,7 @@ export class GraphPanel {
       state.showAllRuns = !!e.data.data.showAllRuns;
       state.runSize = e.data.data.runSize || 0;
       state.totalSize = e.data.data.totalSize || 0;
+      state.autoOpenTerminals = !!e.data.data.autoOpenTerminals;
       state.stats = e.data.data.stats || {};
       render();
     }
@@ -1484,6 +1524,7 @@ export class GraphPanel {
       if (el) el.innerHTML = icon(name, label);
     };
     put('[data-act="spawn"]', 'spawn', 'Agent');
+    put('[data-act="openInEditor"]', 'popout');
     put('[data-act="openConfig"]', 'doc');
     put('[data-act="cleanupTerminals"]', 'broom');
     put('[data-act="refresh"]', 'refresh');
@@ -1514,6 +1555,13 @@ export class GraphPanel {
     const layoutBtn = document.getElementById('layout-btn');
     if (layoutBtn) {
       layoutBtn.innerHTML = icon(state.sideBySide ? 'columns' : 'layers');
+    }
+    if (autoTermBtn) {
+      autoTermBtn.innerHTML = icon('terminal');
+      autoTermBtn.classList.toggle('primary', !!state.autoOpenTerminals);
+      autoTermBtn.title = state.autoOpenTerminals
+        ? 'Auto-open terminals: on — click to turn off'
+        : "Open each agent's terminal automatically as it starts running — for watching or recording a run live";
     }
     renderHud();
     renderAgents();
