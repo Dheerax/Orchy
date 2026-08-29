@@ -69,11 +69,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       event.status === 'running' &&
       !autoOpenedTerminals.has(event.session) &&
       vscode.workspace.getConfiguration('orchy').get<boolean>('autoOpenTerminals', false)
-      vscode.workspace.getConfiguration('orchy').get<boolean>('autoOpenTerminals', true)
     ) {
       autoOpenedTerminals.add(event.session);
       void vscode.commands.executeCommand('orchy.openTerminal', event.session, true);
-      void vscode.commands.executeCommand('orchy.openTerminal', event.session, false);
     }
   });
 

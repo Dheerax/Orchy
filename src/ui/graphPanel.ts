@@ -1543,17 +1543,6 @@ export class GraphPanel {
       const main = document.getElementById('main-content');
       if (main) main.style.display = 'none';
     }
-    const agents = state.viewMode === 'agents' || !!state.plan;
-    agentsPane.classList.toggle('on', agents);
-    const main = document.getElementById('main-content');
-    if (main) main.style.display = agents ? 'none' : 'flex';
-    const wPane = document.getElementById('workflow-pane');
-    const gPane = document.getElementById('git-tree-pane');
-    if (wPane) wPane.style.display = state.viewMode === 'split' || state.viewMode === 'workflow' ? 'flex' : 'none';
-    if (gPane) gPane.style.display = state.viewMode === 'split' || state.viewMode === 'tree' ? 'flex' : 'none';
-    document.querySelectorAll('.mode-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.view === (state.plan ? 'agents' : state.viewMode));
-    });
     if (scopeBtn) {
       scopeBtn.innerHTML = icon(
         'scope',
@@ -2276,7 +2265,6 @@ export class GraphPanel {
     renderGitTree();
   });
 
-  render();
   api.postMessage({ type: 'ready' });
 </script>
 </body>
