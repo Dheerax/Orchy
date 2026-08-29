@@ -69,9 +69,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       event.status === 'running' &&
       !autoOpenedTerminals.has(event.session) &&
       vscode.workspace.getConfiguration('orchy').get<boolean>('autoOpenTerminals', false)
+      vscode.workspace.getConfiguration('orchy').get<boolean>('autoOpenTerminals', true)
     ) {
       autoOpenedTerminals.add(event.session);
       void vscode.commands.executeCommand('orchy.openTerminal', event.session, true);
+      void vscode.commands.executeCommand('orchy.openTerminal', event.session, false);
     }
   });
 
@@ -298,10 +300,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       // A real terminal running the backend's own TUI: interactive, so you can
       // type at the agent, which the transcript view deliberately cannot do.
-      // A real interactive terminal executing the backend attach command in the user's shell
-      const cmdArgs = attach.args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ');
-      const isPowershell = process.platform === 'win32';
-      const fullCmd = isPowershell ? `& "${attach.command}" ${cmdArgs}` : `"${attach.command}" ${cmdArgs}`;
       const terminal = vscode.window.createTerminal({
         name: `${session.id} · ${session.role}`,
         location: side
@@ -318,11 +316,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
       terminal.show(false);
       output.appendLine(`[${target}] terminal: ${attach.command} ${attach.args.join(' ')}`);
-      terminal.sendText(fullCmd);
-      if (!side) {
-        void vscode.commands.executeCommand('workbench.action.terminal.focus');
-      }
-      output.appendLine(`[${target}] terminal: ${fullCmd}`);
     }),
 
     vscode.commands.registerCommand('orchy.openTerminalGrid', async () => {
@@ -345,10 +338,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       for (let i = 0; i < active.length; i++) {
         const session = active[i];
         const handle = orchestrator.handleOf(session.id);
-        let handle = orchestrator.handleOf(session.id);
-        if (!handle && session?.backend.handle && session.worktree) {
-          handle = { id: session.backend.handle, directory: session.worktree.path };
-        }
         if (!handle) {
           continue;
         }
@@ -357,9 +346,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           continue;
         }
         const column = (i % 4) + 1;
-        const cmdArgs = attach.args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ');
-        const isPowershell = process.platform === 'win32';
-        const fullCmd = isPowershell ? `& "${attach.command}" ${cmdArgs}` : `"${attach.command}" ${cmdArgs}`;
         const terminal = vscode.window.createTerminal({
           name: `${session.id} · ${session.role}`,
           location: { viewColumn: column, preserveFocus: false },
@@ -371,7 +357,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           env: { TERM: 'xterm-256color' },
         });
         terminal.show(false);
-        terminal.sendText(fullCmd);
       }
     }),
 

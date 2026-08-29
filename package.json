@@ -165,8 +165,6 @@
           "type": "boolean",
           "default": false,
           "description": "Open a terminal automatically the moment each agent starts running, instead of leaving it to attach on demand. For watching or recording a run live; off by default so a pipeline of several agents does not split your editor into that many terminals unasked."
-          "default": true,
-          "description": "Open a terminal automatically the moment each agent starts running, instead of leaving it to attach on demand. For watching or recording a run live."
         }
       }
     }
