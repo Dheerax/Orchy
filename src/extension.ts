@@ -398,7 +398,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       // Opens the session manager on that agent: roster on the left, everything
       // known about the one you picked on the right.
-      GraphPanel.show();
+      GraphPanel.focusSession(id);
     }),
 
     vscode.commands.registerCommand('orchy.spawn', async () => {

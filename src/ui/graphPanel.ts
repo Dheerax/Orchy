@@ -312,6 +312,7 @@ export class GraphPanel {
             deps.registry,
             deps.worktrees
           );
+          GraphPanel.current.push();
         },
       },
       { webviewOptions: { retainContextWhenHidden: true } }
@@ -325,6 +326,15 @@ export class GraphPanel {
       return;
     }
     void vscode.commands.executeCommand(`${GraphPanel.viewId}.focus`);
+  }
+
+  static focusSession(id: string): void {
+    GraphPanel.show();
+    if (GraphPanel.current) {
+      GraphPanel.current.panel.reveal();
+      GraphPanel.current.push();
+      void GraphPanel.current.panel.webview.postMessage({ type: 'select', id });
+    }
   }
 
   static openInEditor(): void {
@@ -359,8 +369,10 @@ export class GraphPanel {
     // does not exist yet, and it reads this when it resolves a moment later.
     GraphPanel.activePlan = plan;
     GraphPanel.show();
-    GraphPanel.current?.panel.reveal();
-    GraphPanel.current?.push();
+    if (GraphPanel.current) {
+      GraphPanel.current.panel.reveal();
+      GraphPanel.current.push();
+    }
   }
 
   static clearPlan(id: string): void {
@@ -1511,6 +1523,9 @@ export class GraphPanel {
       state.totalSize = e.data.data.totalSize || 0;
       state.autoOpenTerminals = !!e.data.data.autoOpenTerminals;
       state.stats = e.data.data.stats || {};
+      render();
+    } else if (e.data && e.data.type === 'select') {
+      state.selectedNodeId = e.data.id;
       render();
     }
   });
