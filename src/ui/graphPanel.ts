@@ -312,7 +312,6 @@ export class GraphPanel {
             deps.registry,
             deps.worktrees
           );
-          GraphPanel.current.push();
         },
       },
       { webviewOptions: { retainContextWhenHidden: true } }
@@ -326,15 +325,6 @@ export class GraphPanel {
       return;
     }
     void vscode.commands.executeCommand(`${GraphPanel.viewId}.focus`);
-  }
-
-  static focusSession(id: string): void {
-    GraphPanel.show();
-    if (GraphPanel.current) {
-      GraphPanel.current.panel.reveal();
-      GraphPanel.current.push();
-      void GraphPanel.current.panel.webview.postMessage({ type: 'select', id });
-    }
   }
 
   static openInEditor(): void {
@@ -369,10 +359,8 @@ export class GraphPanel {
     // does not exist yet, and it reads this when it resolves a moment later.
     GraphPanel.activePlan = plan;
     GraphPanel.show();
-    if (GraphPanel.current) {
-      GraphPanel.current.panel.reveal();
-      GraphPanel.current.push();
-    }
+    GraphPanel.current?.panel.reveal();
+    GraphPanel.current?.push();
   }
 
   static clearPlan(id: string): void {
@@ -1027,6 +1015,7 @@ export class GraphPanel {
     padding: 8px 14px; background: var(--card);
     border-bottom: 1px solid var(--line);
     gap: 12px; z-index: 10;
+    backdrop-filter: blur(8px);
   }
   .brand-unused { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
   .brand .logo { color: var(--running); font-size: 14px; font-weight: 700; }
@@ -1040,24 +1029,33 @@ export class GraphPanel {
     background: none; border: none; color: var(--muted);
     padding: 3px 10px; font-size: 11px; border-radius: 4px;
     cursor: pointer; font-weight: 500;
+    padding: 4px 11px; font-size: 11px; border-radius: 4px;
+    cursor: pointer; font-weight: 500; transition: all .15s ease;
   }
   .mode-btn:hover { color: var(--fg); }
   .mode-btn.active { background: var(--card); color: var(--running); font-weight: 600; }
+  .mode-btn:hover { color: var(--fg); background: var(--hover-bg); }
+  .mode-btn.active { background: var(--card); color: var(--running); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
 
   /* Live HUD Chips */
   .hud { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .chip {
     display: inline-flex; align-items: center; gap: 4px;
     padding: 2px 7px; border-radius: 99px;
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 8px; border-radius: 99px;
     border: 1px solid var(--line); background: var(--bg);
     font-size: 10.5px; font-weight: 500;
   }
   .chip .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
   .chip.exec .dot { background: var(--running); }
+  .chip.exec .dot { background: var(--running); box-shadow: 0 0 6px var(--running); }
   .chip.wait .dot { background: var(--blocked); }
   .chip.done .dot { background: var(--done); }
+  .chip.done .dot { background: var(--done); box-shadow: 0 0 5px var(--done); }
   .chip.mrg .dot { background: var(--merged); }
   .chip.err .dot { background: var(--failed); }
+  .chip.err .dot { background: var(--failed); box-shadow: 0 0 6px var(--failed); }
   .chip.spend { color: var(--muted); font-family: var(--mono); }
 
   /* Actions & Search */
@@ -1066,14 +1064,19 @@ export class GraphPanel {
     background: var(--bg); border: 1px solid var(--line);
     color: var(--fg); border-radius: 5px;
     padding: 3px 8px; font-size: 11px; outline: none; width: 160px;
+    padding: 4px 8px; font-size: 11px; outline: none; width: 150px;
     transition: width .2s ease, border-color .2s ease;
   }
   .search-box:focus { width: 220px; border-color: var(--running); }
+  .search-box:focus { width: 200px; border-color: var(--running); }
   .tbtn {
     background: var(--bg); border: 1px solid var(--line);
     color: var(--fg); border-radius: 5px;
     padding: 3px 9px; font-size: 11px; cursor: pointer;
     display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 9px; font-size: 11px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px; font-weight: 500;
+    transition: all .15s ease;
   }
   .tbtn:hover { border-color: var(--running); color: var(--running); }
   .tbtn.primary { background: color-mix(in srgb, var(--running) 20%, var(--bg)); border-color: var(--running); }
@@ -1082,6 +1085,15 @@ export class GraphPanel {
   .tbtn.icon-only { padding: 3px; width: 26px; justify-content: center; }
   /* Icons inherit the button's colour, which is what makes hover and the theme
      work without a second rule for every state. */
+  .tbtn.primary {
+    background: color-mix(in srgb, var(--running) 22%, var(--bg));
+    border-color: var(--running); color: #fff; font-weight: 600;
+  }
+  .tbtn.primary:hover {
+    background: color-mix(in srgb, var(--running) 35%, var(--bg));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--running) 40%, transparent);
+  }
+  .tbtn.icon-only { padding: 4px; width: 26px; height: 26px; justify-content: center; }
   .ic {
     width: 13px; height: 13px; flex: 0 0 auto;
     fill: none; stroke: currentColor; stroke-width: 1.5;
@@ -1103,29 +1115,51 @@ export class GraphPanel {
   #agents-body {
     flex: 1 1 auto; overflow-y: auto; padding: 10px 12px;
     display: flex; flex-direction: column; gap: 8px;
+    flex: 1 1 auto; overflow-y: auto; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 10px;
   }
   .acard {
     border: 1px solid var(--line); border-radius: 9px; background: var(--card);
     padding: 9px 12px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--card);
+    padding: 10px 14px; cursor: pointer; transition: all .15s ease;
   }
   .acard:hover { border-color: var(--running); }
+  .acard:hover { border-color: var(--running); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
   .acard.sel { border-color: var(--running);
                background: color-mix(in srgb, var(--running) 7%, var(--card)); }
   .ahead { display: flex; align-items: baseline; gap: 9px; }
   .adot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
           align-self: center; }
   .aid { font-family: var(--mono); font-size: 11px; color: var(--fg); font-weight: 600; }
+               background: color-mix(in srgb, var(--running) 8%, var(--card)); }
+  .ahead { display: flex; align-items: center; gap: 9px; }
+  .adot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .aid { font-family: var(--mono); font-size: 11.5px; color: var(--fg); font-weight: 600; }
   .arole { font-size: 11px; color: var(--muted); }
   .ameta { margin-left: auto; display: flex; gap: 10px; font-size: 10px;
+  .ameta { margin-left: auto; display: flex; gap: 10px; font-size: 10.5px;
            color: var(--muted); font-family: var(--mono); }
   .atask { font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.5;
+  .model-badge {
+    background: color-mix(in srgb, var(--running) 12%, transparent);
+    color: var(--running); border: 1px solid color-mix(in srgb, var(--running) 30%, transparent);
+    padding: 1px 6px; border-radius: 99px; font-size: 9.5px;
+  }
+  .atask { font-size: 11.5px; color: var(--fg); opacity: .85; margin-top: 5px; line-height: 1.5;
            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .adeliv { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
   .aacts { display: flex; gap: 4px; margin-top: 7px; }
+  .adeliv { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .aacts { display: flex; gap: 6px; margin-top: 8px; }
   .aacts button {
     background: none; border: 1px solid var(--line); border-radius: 5px;
     color: var(--muted); cursor: pointer; font-size: 10.5px; padding: 2px 8px;
     display: inline-flex; align-items: center; gap: 4px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 4px;
+    color: var(--muted); cursor: pointer; font-size: 10.5px; padding: 3px 8px;
+    display: inline-flex; align-items: center; gap: 4px; font-weight: 500;
+    transition: all .12s ease;
   }
   .aacts button:hover { color: var(--running); border-color: var(--running); }
 
@@ -1133,21 +1167,45 @@ export class GraphPanel {
   .planbar { display: flex; flex-direction: column; gap: 10px; }
   .planhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .ptitle { font-size: 14px; font-weight: 600; color: var(--fg); }
+  /* Plan Review Interface */
+  .planbar { display: flex; flex-direction: column; gap: 12px; padding: 4px 0; }
+  .planhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+  .ptitle { font-size: 14.5px; font-weight: 700; color: #fff; letter-spacing: -0.01em; }
   .parity { font-size: 11px; color: var(--muted); }
   .pstages { display: flex; flex-direction: column; gap: 10px; }
+  .pstages { display: flex; flex-direction: column; gap: 12px; }
   .pstage { display: flex; flex-direction: column; gap: 6px; }
   .pstage-h { font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
               color: var(--muted); }
   .pacts { display: flex; gap: 8px; padding-top: 2px; }
+  .pstage-h { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+              color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .stage-tag { color: var(--running); font-weight: 700; }
+  .stage-par { color: var(--muted); font-size: 10px; }
+  .pstage-cards { display: flex; flex-direction: column; gap: 6px; }
+  .pacts { display: flex; gap: 10px; padding-top: 8px; }
   .pacts button {
     border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
     font-size: 12px; padding: 5px 14px; background: none; color: var(--fg);
     display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; padding: 6px 16px; background: var(--bg); color: var(--fg);
+    display: inline-flex; align-items: center; gap: 6px; font-weight: 600;
+    transition: all .15s ease;
   }
   .pacts .go { border-color: var(--done); color: var(--done); }
+  .pacts .go {
+    background: color-mix(in srgb, var(--done) 22%, var(--bg));
+    border-color: var(--done); color: var(--done);
+  }
+  .pacts .go:hover {
+    background: color-mix(in srgb, var(--done) 35%, var(--bg));
+    box-shadow: 0 0 10px color-mix(in srgb, var(--done) 40%, transparent);
+  }
   .pacts .no:hover { border-color: var(--failed); color: var(--failed); }
   .broke { border: 1px solid var(--blocked); border-left-width: 3px; border-radius: 8px;
            padding: 7px 10px; background: color-mix(in srgb, var(--blocked) 8%, var(--card)); }
+  .broke { border: 1px solid var(--blocked); border-left-width: 3px; border-radius: 6px;
+           padding: 8px 12px; background: color-mix(in srgb, var(--blocked) 8%, var(--card)); }
   .bfix { font-size: 11.5px; line-height: 1.5; }
 
   #main-content {
@@ -1524,9 +1582,6 @@ export class GraphPanel {
       state.autoOpenTerminals = !!e.data.data.autoOpenTerminals;
       state.stats = e.data.data.stats || {};
       render();
-    } else if (e.data && e.data.type === 'select') {
-      state.selectedNodeId = e.data.id;
-      render();
     }
   });
 
@@ -1767,11 +1822,14 @@ export class GraphPanel {
         const needs = (a.needs || []).join(', ');
         const deliv = (a.deliverables || []).map(d => d.spec).join(', ');
         return '<div class="acard">' +
+        return '<div class="acard" style="border-left: 3px solid var(--running);">' +
           '<div class="ahead">' +
             '<span class="adot" style="background:var(--running)"></span>' +
+            '<span class="adot" style="background:var(--running); box-shadow: 0 0 6px var(--running);"></span>' +
             '<span class="aid">' + esc(a.role) + '</span>' +
             '<span class="ameta">' +
               (a.model ? '<span>' + esc(a.model.split('/').pop()) + '</span>' : '<span>default model</span>') +
+              (a.model ? '<span class="model-badge">' + esc(a.model.split('/').pop()) + '</span>' : '<span>default model</span>') +
             '</span>' +
           '</div>' +
           '<div class="atask">' + esc(a.task || '') + '</div>' +
@@ -1787,6 +1845,9 @@ export class GraphPanel {
         '<div class="pstage-h">Stage ' + (Number(depth) + 1) +
           (group.length > 1 ? ' · ' + group.length + ' in parallel' : '') + '</div>' +
         cards + '</div>';
+        '<div class="pstage-h"><span class="stage-tag">Stage ' + (Number(depth) + 1) + '</span>' +
+          (group.length > 1 ? '<span class="stage-par"> · ' + group.length + ' in parallel</span>' : '') + '</div>' +
+        '<div class="pstage-cards">' + cards + '</div></div>';
     }).join('');
 
     return '<div class="planbar">' +
@@ -1827,6 +1888,7 @@ export class GraphPanel {
     }
 
     agentsBody.innerHTML = shown.map(n => {
+      const isRunning = n.status === 'running' || n.status === 'spawning';
       const deliv = (n.deliverablesCount || 0) > 0
         ? '<span class="deliv-chip ' + (n.deliverablesVerified === n.deliverablesCount ? 'v-yes' : 'v-no') + '">' +
           icon(n.deliverablesVerified === n.deliverablesCount ? 'check' : 'warn') +
@@ -1837,11 +1899,13 @@ export class GraphPanel {
         '" data-id="' + esc(n.id) + '">' +
         '<div class="ahead">' +
           '<span class="adot" style="background:' + statusColor(n.status) + '"></span>' +
+          '<span class="adot" style="background:' + statusColor(n.status) + (isRunning ? '; box-shadow: 0 0 6px var(--running);' : '') + '"></span>' +
           '<span class="aid">' + esc(n.id) + '</span>' +
           '<span class="arole">' + esc(n.status.replace('_', ' ')) +
             (n.merged ? ' · merged' : '') + '</span>' +
           '<span class="ameta">' +
             (n.model ? '<span>' + esc(n.model.split('/').pop()) + '</span>' : '') +
+            (n.model ? '<span class="model-badge">' + esc(n.model.split('/').pop()) + '</span>' : '') +
             (n.spend > 0 ? '<span>$' + n.spend.toFixed(3) + '</span>' : '') +
           '</span>' +
         '</div>' +

@@ -313,6 +313,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         env: { TERM: 'xterm-256color' },
       });
       terminal.show(false);
+      if (!side) {
+        void vscode.commands.executeCommand('workbench.action.terminal.focus');
+      }
       output.appendLine(`[${target}] terminal: ${attach.command} ${attach.args.join(' ')}`);
     }),
 
@@ -398,7 +401,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       // Opens the session manager on that agent: roster on the left, everything
       // known about the one you picked on the right.
-      GraphPanel.focusSession(id);
+      GraphPanel.show();
     }),
 
     vscode.commands.registerCommand('orchy.spawn', async () => {
