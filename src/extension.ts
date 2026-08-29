@@ -272,12 +272,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
       const session = registry.get(target);
-      const handle = orchestrator.handleOf(target);
+      let handle = orchestrator.handleOf(target);
+      if (!handle && session?.backend.handle && session.worktree) {
+        handle = { id: session.backend.handle, directory: session.worktree.path };
+      }
       if (!session || !handle) {
         void vscode.window.showWarningMessage(
           `Orchy: ${target} is not connected in this window, so there is no live session to attach to.`
         );
         return;
+      }
+      if (backend.ensureServer) {
+        try {
+          await backend.ensureServer();
+        } catch (err) {
+          output.appendLine(`[${target}] ensureServer warning: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
       const attach = backend.attachCommand(handle);
       if (!attach) {
@@ -292,7 +302,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         name: `${session.id} · ${session.role}`,
         location: side
           ? { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false }
-          : { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+          : undefined,
         cwd: session.worktree?.path,
         shellPath: attach.command,
         shellArgs: attach.args,
