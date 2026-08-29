@@ -3,8 +3,18 @@
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code. An orchestrator plans a pipeline you approve; every agent runs in its own git worktree; you watch the branches diverge and merge.",
   "version": "0.39.0",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#161618",
+    "theme": "dark"
+  },
   "license": "MIT",
-  "publisher": "orchy",
+  "publisher": "dheerax",
+  "homepage": "https://github.com/Dheerax/Orchy#readme",
+  "bugs": {
+    "url": "https://github.com/Dheerax/Orchy/issues"
+  },
+  "qna": "marketplace",
   "repository": {
     "type": "git",
     "url": "https://github.com/Dheerax/Orchy.git"
