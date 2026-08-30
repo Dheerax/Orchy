@@ -1,244 +1,199 @@
+<div align="center">
+
+<img src="media/logo.png" alt="Orchy Logo" width="180" height="180" />
+
 # Orchy
 
-Multi-agent coding orchestration inside VS Code. You describe the work; an
-orchestrator proposes a pipeline; you approve it; each agent runs in its own git
-worktree, and you watch the branches diverge and merge in real time.
+**Autonomous Multi-Agent Coding Orchestration for VS Code**
 
-> **Status: early but usable.** Everything below works. Not yet on the
-> Marketplace — install from a `.vsix` or run it from source.
+[![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/dheerax.orchy-ai?style=flat-square&logo=visual-studio-code&logoColor=white&color=38bdf8)](https://marketplace.visualstudio.com/items?itemName=dheerax.orchy-ai)
+[![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/dheerax.orchy-ai?style=flat-square&color=3fb950)](https://marketplace.visualstudio.com/items?itemName=dheerax.orchy-ai)
+[![GitHub Stars](https://img.shields.io/github/stars/Dheerax/Orchy?style=flat-square&logo=github&color=bc8cff)](https://github.com/Dheerax/Orchy)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![Powered By OpenCode](https://img.shields.io/badge/Powered%20By-OpenCode-10b981?style=flat-square)](https://opencode.ai)
+
+*An orchestrator plans a pipeline DAG you approve; every agent runs in its own isolated Git worktree; you watch the branches diverge, deliver, and merge in real time.*
+
+[**Explore Interactive Walkthrough**](https://dheerax.github.io/Orchy/docs/demo.html) · [**Report Bug**](https://github.com/Dheerax/Orchy/issues) · [**Architecture Deep Dive**](ARCHITECTURE.md)
+
+</div>
 
 ---
 
-## Why this exists
+## ⚡ Why Orchy?
 
-Running several coding agents at once is easy now. Knowing what they are doing is not.
+Running several coding agents at once is easy now. Knowing what they are doing and preventing broken state is not.
 
-**"Idle" does not mean "done."** Agents go quiet all the time without having
-produced anything. This project started after three delegated research agents
-reported idle repeatedly for an hour while writing zero files. In Orchy a session
-declares its deliverables up front and can only reach `complete` when every one of
-them verifies on disk. A backend going quiet proves nothing — it parks the session
-at `idle_unverified`, which is a different thing and says so.
+- 🛡️ **"Idle" does not mean "Done"**: Agents often stop or go quiet without writing files or passing checks. In Orchy, every session declares strict **deliverables** (files, types, commands) up front and only reaches `complete` when verified on disk. If an agent goes idle without producing its deliverables, it is parked at `idle_unverified`.
+- 🌲 **Zero Shared State & Collision-Free Git Worktrees**: Every agent gets its own isolated Git worktree and dedicated branch. Two agents can never overwrite each other's files, clobber the working tree, or corrupt git index state.
+- 🚦 **Interactive DAG Approval**: A pipeline is a structured shape, not a blind queue. Two agents can run in parallel while a third depends on both. You review and approve the visual execution DAG before any agent spends tokens.
+- 📊 **Unified Single-Panel Observability**: Monitor live token spend, deliverables verification, terminal outputs, and the multi-lane git railway commit graph in one high-density mission control panel.
 
-**Past three or four agents, you are the bottleneck.** Not merge conflicts —
-noticing which agent is blocked. Orchy puts that count on the panel's own tab,
-so it is legible while you are looking at your code.
+---
 
-**A pipeline is a shape, not a queue.** Two agents can wait on one. One agent can
-wait on three. You approve that shape before anything runs, as a diagram, and
-then watch it happen as a branch graph.
+## 🏗️ How It Works
 
-## How it works
-
-```
-Orchestrator (Claude Code, or any MCP client)
-        │  MCP
-   orchy-mcp  ──HTTP──▶  Extension host  ──▶  .orchy/events.jsonl
-                              │                (append-only source of truth)
-                              │
-                    one window, in the panel
-                 agents · pipeline · history
+```text
+Orchestrator (Claude Code, Antigravity, Cursor, or MCP client)
+        │
+        ▼ (MCP / JSON-RPC)
+    orchy-mcp ──HTTP──▶ VS Code Extension Host ──▶ .orchy/events.jsonl
+                              │                     (append-only source of truth)
+                              ▼
+                 Unified Mission Control Panel
+                 Agents · Pipeline · Git History
 ```
 
-- **The extension host owns all state.** Every surface is a disposable renderer
-  that rebuilds from the event log. Close a panel, reload the window, quit and
-  reopen — nothing is lost, including a plan you had not decided on yet.
-- **One worktree per agent, one branch per worktree.** Git itself guarantees two
-  agents never share a branch.
-- **Terminals are views, never control surfaces.** `opencode attach` binds a real
-  TUI to a session Orchy drives over HTTP. Nothing sends synthetic keystrokes to
-  an agent.
+- **Extension Host owns all state**: Every UI surface is a reactive renderer that rebuilds from `.orchy/events.jsonl`. Window reloads or panel closures never lose ongoing runs or pending plans.
+- **Strict Dependency Inheritance**: Dependent agents inherit their upstream dependencies' commits automatically before starting.
+- **Native Terminal Attach**: Connects directly via `opencode attach` to real interactive pseudo-terminal TUIs—no fake keystroke injection.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design and what was
-deliberately deferred.
+---
 
-## See it
+## 📦 Installation
 
-[**A 30-second walkthrough**](docs/demo.html) — one prompt becomes a pipeline you approve,
-five agents run on their own branches, and the branches fold back into main. Open the file
-in a browser; it plays on load.
+### Option 1: VS Code Marketplace (Recommended)
 
-## Quickstart
+1. Open VS Code.
+2. Press `Ctrl+P` (or `Cmd+P` on macOS) and run:
+   ```bash
+   ext install dheerax.orchy-ai
+   ```
+3. Or search for **`Orchy`** in the Extensions View (`Ctrl+Shift+X`).
 
-You need [OpenCode](https://opencode.ai) on your `PATH` with at least one
-provider configured, and a git repository to work in. Orchy starts and manages
-`opencode serve` itself.
+### Option 2: From VSIX Release
+
+Download the latest `.vsix` from [GitHub Releases](https://github.com/Dheerax/Orchy/releases) and run:
+```bash
+code --install-extension orchy-ai-0.39.1.vsix
+```
+
+### Option 3: From Source
 
 ```bash
 git clone https://github.com/Dheerax/Orchy.git
 cd Orchy
 npm install
-npm test              # optional, ~20s, uses real git worktrees
+npm test
 npx @vscode/vsce package --no-dependencies
-code --install-extension orchy-*.vsix
+code --install-extension orchy-ai-*.vsix
 ```
 
-Point your orchestrator at the MCP server. Register it once, globally — the
-server finds the right project by walking up from its working directory, so one
-entry covers every workspace. For Claude Code that is `~/.claude.json`:
+---
 
+## 🚀 Quickstart
+
+### 1. Prerequisites
+- [OpenCode CLI](https://opencode.ai) on your `PATH` with at least one model provider configured.
+- A Git repository open in VS Code.
+
+### 2. Connect Your AI Assistant via MCP
+
+Add the Orchy MCP server to your AI tool's global configuration. The server automatically detects your active workspace:
+
+#### For Claude Code (`~/.claude.json`):
 ```json
 {
   "mcpServers": {
     "orchy": {
       "type": "stdio",
       "command": "node",
-      "args": ["/path/to/Orchy/mcp/orchy-mcp.mjs"]
+      "args": ["/absolute/path/to/Orchy/mcp/orchy-mcp.mjs"]
     }
   }
 }
 ```
 
-Then open your project in VS Code and tell the orchestrator what you want:
+#### For Cursor / Windsurf / Antigravity (`mcp.json`):
+```json
+{
+  "mcpServers": {
+    "orchy": {
+      "command": "node",
+      "args": ["/absolute/path/to/Orchy/mcp/orchy-mcp.mjs"]
+    }
+  }
+}
+```
 
-> Use the orchy tools — read `orchy_guide` and `orchy_models` first. Add a
-> validation library: a core plus three independent validators and a test suite.
-> Plan the validators to run in parallel.
+### 3. Run a Multi-Agent Pipeline
 
-A plan appears in the **Orchy** panel at the bottom, next to your terminal: a
-diagram of who depends on whom, what each agent owes, and which model each will
-run on. Approve it and the agents start.
+Ask your AI assistant:
+> *"Use the orchy tools — read `orchy_guide` and `orchy_models`. Add a plugin system: define the interface in Stage 1, implement file and memory sinks in parallel in Stage 2, and create the router test suite in Stage 3."*
 
-## Project rules
+The Orchy panel in VS Code will pop up with the proposed visual DAG:
+1. Click **`[ Approve and run ]`**.
+2. Watch parallel git worktrees spawn with live token counters and verified deliverable status.
+3. Switch between **Agents**, **Pipeline**, and **History** to inspect the live Git commit railway graph.
 
-Run **`Orchy: Create Project Config`** to write a `.orchy/config.json`. It is where the things an orchestrator cannot infer live:
+---
+
+## 🛠️ MCP Tools Reference
+
+| Tool | Purpose |
+| :--- | :--- |
+| **`orchy_guide`** | Authoritative operational guide & workflow best practices. |
+| **`orchy_project`** | Reads project house rules from `.orchy/config.json`. |
+| **`orchy_models`** | Fetches live catalogue of available models with tier and pricing. |
+| **`orchy_plan`** | Proposes a multi-stage execution DAG and awaits human approval. |
+| **`orchy_plan_status`** | Checks decision status on a pending plan. |
+| **`orchy_spawn`** | Spawns an individual agent session in an isolated worktree. |
+| **`orchy_list`** / **`orchy_status`** | Introspects live sessions, spend, and missing deliverables. |
+| **`orchy_wait`** | Event-driven blocking wait for agent state changes (no sleep-polling). |
+| **`orchy_verify`** | Re-evaluates file, glob, and command deliverables on disk. |
+| **`orchy_merge`** | Merges and fast-forwards verified agent work into the base branch. |
+| **`orchy_send`** / **`orchy_relay`** | Sends follow-up prompts or pipes output between agents. |
+| **`orchy_set_model`** | Dynamically changes the LLM model for a running session. |
+| **`orchy_interrupt`** / **`orchy_kill`** | Pauses, cancels, or archives sessions and tears down worktrees. |
+
+---
+
+## ⚙️ Configuration & Settings
+
+| Setting | Default | Description |
+| :--- | :--- | :--- |
+| `orchy.autoOpenTerminals` | `true` | Automatically opens interactive agent terminals upon start. |
+| `orchy.baseBranch` | `main` | Base branch that worktrees branch from and merge back into. |
+| `orchy.autoMerge` | `false` | Automatically merges sessions once deliverables verify cleanly. |
+| `orchy.globalBudgetCap` | `0` | Estimated spend ceiling per session in USD (`0` disables). |
+
+---
+
+## 📋 Project Configuration (`.orchy/config.json`)
+
+Run **`Orchy: Create Project Config`** (`Ctrl+Shift+P`) to generate project rules:
 
 ```json
 {
   "rules": [
-    "Plain CommonJS. Do not introduce a build step.",
-    "No new dependencies without saying why in the commit message."
+    "TypeScript strict mode. No any.",
+    "All unit tests must pass before submitting deliverables.",
+    "Do not commit to main branch directly."
   ],
   "verify": "npm test",
-  "models": { "cheap": "opencode/ling-3.0-flash-free" },
+  "models": {
+    "preferred": "anthropic/claude-3-7-sonnet",
+    "cheap": "google/antigravity-gemini-3-flash"
+  },
   "baseBranch": "main",
-  "budgetCap": 0
+  "budgetCap": 5.0
 }
 ```
 
-`rules` are appended verbatim to every agent's brief — the prompt being the only
-place they can actually change what an agent does — and `verify` is a command
-every agent must pass on top of its own deliverables. Commit the file: the rest
-of the team gets them too. A malformed one costs you the settings you got wrong
-and nothing else.
+---
 
-## What you see
+## 🧪 Running Tests
 
-One window, in the panel beside your terminal, with three views of the same run.
-
-**Agents** — what exists and what each owes: status, model, spend, and whether
-its deliverables actually verified, with its terminal, a diff of what it changed,
-verify and merge one click away. A plan awaiting approval takes over this view,
-because the decision matters more than the run behind it.
-
-**Pipeline** — agents by stage, so the width of the widest stage is the
-parallelism you are actually buying. Fitted to the pane; zooming in is a
-deliberate act.
-
-**History** — the branch graph: time left to right, main across the top, each
-agent forking away where it was created and folding back where it merged. Every
-step is labelled, and clicking one opens that agent.
-
-## The pipeline
-
-Prefer `orchy_plan` over spawning agents one at a time. It checks the plan before
-a human ever sees it — a need nobody provides, two agents promising the same
-symbol, a dependency cycle, an agent with no deliverables, two siblings writing
-the same file — and shows the warnings alongside the diagram.
-
-A dependency means **"after, and on top of"**: the dependency's branch is merged
-into the dependent's worktree before it starts, so it builds on real work rather
-than a base that predates it.
-
-Plans survive a window reload. If you close VS Code mid-decision, the plan comes
-back and approving it still spawns the agents.
-
-## Models
-
-`orchy_models` returns every model the backend can currently run, with its tier
-and price. Matching the model to the work is most of what makes a pipeline cheap
-or expensive.
-
-A model named in a plan is a **preference, not an instruction**. Orchy sorts the
-live catalogue into cheap / standard / strong by price — not by a table of model
-names that would be stale in a month — and if a model cannot be honoured it
-substitutes the nearest available one **of the same tier** and records that it
-did. A cheap mechanical agent whose free model was withdrawn does not quietly
-start costing frontier money. Only failures that read as model problems trigger a
-retry; a dead server fails the same way forever.
-
-## Tools
-
-| Tool | What it does |
-|---|---|
-| `orchy_guide` | How to operate the pipeline. Read this first |
-| `orchy_project` | This repository's rules, from its `.orchy/config.json` |
-| `orchy_models` | Available models with tier and price |
-| `orchy_plan` / `orchy_plan_status` | Propose a pipeline and await approval |
-| `orchy_spawn` | One agent, in its own worktree |
-| `orchy_list` / `orchy_status` | Session state, including missing deliverables |
-| `orchy_wait` | Block until something needs attention — never sleep-poll |
-| `orchy_send` / `orchy_relay` | Follow-up prompt; hand one agent's output to another |
-| `orchy_set_model` | Change a running session's model mid-flight |
-| `orchy_verify` | Re-check deliverables. The only path to `complete` |
-| `orchy_fork` | Branch a session to try a second approach |
-| `orchy_merge` | Rebase onto main and fast-forward. Refused unless verified |
-| `orchy_interrupt` / `orchy_kill` / `orchy_archive` | Stop a turn, a session, or clean up |
-
-## Settings
-
-| Setting | Default | |
-|---|---|---|
-| `orchy.baseBranch` | `main` | Branch worktrees cut from and merge into |
-| `orchy.autoMerge` | `false` | Merge a verified session when nothing is ambiguous |
-| `orchy.globalBudgetCap` | `0` | Stop a session past this spend. `0` disables |
-| `orchy.autoOpenTerminals` | `false` | Open each agent's terminal the moment it starts running, instead of on demand |
-
-## Design decisions worth knowing
-
-- **Closing a terminal does not kill the session.** It detaches. Killing is
-  explicit — a stray <kbd>Ctrl</kbd>+<kbd>W</kbd> should not destroy an hour of work.
-- **`git stash`, `git reset --hard` and force-push are forbidden to agents.**
-  Worktrees isolate *files*, not the stash — which is shared across every worktree
-  of a repo, so one agent popping a stash can consume another's.
-- **Bootstrapped files are excluded per-worktree.** `.worktreeinclude` copies
-  `.env` and friends into new worktrees, then adds them to that worktree's
-  `info/exclude` so they do not read as dirty.
-- **The layout command is a command.** Rearranging someone's editor the moment an
-  extension activates is hostile.
-- **A plan is a decision, so it survives everything.** Reload, close, crash. It is
-  also written into the page as plain HTML with `command:` links, so it can be
-  approved even if the webview's script never runs.
-
-## Adding a backend
-
-Implement [`AgentBackend`](src/backends/types.ts) in one file and register it. No
-changes to the extension host. `capabilities()` is how the orchestrator routes
-work; `models()` is optional and feeds the model policy.
-
-Planned: Codex, agy, Claude Code.
-
-## Tests
+Orchy includes comprehensive unit and integration test suites:
 
 ```bash
 npm test
 ```
 
-State layer, planner, model policy, binary resolution, grid layout, panel
-rendering, branch-graph geometry, a real-git integration suite, and the MCP
-protocol. The integration suite creates a throwaway repository and exercises
-worktree isolation, dirty-worktree refusal, deliverable verification, merge
-gating, dead dependencies, and rebuild-from-log.
+Runs 11 test suites testing the state layer, planner DAG resolution, model tier policies, setup doctor, binary resolution, panel render parsing, rail graph geometry, real-git worktree orchestration, and the MCP protocol.
 
-Two of those suites exist because of specific production failures: the panel
-renderer is a string the compiler never parses, so it is extracted from the
-compiled output and parsed as a browser would; and the branch graph is geometry,
-which fails as a picture that makes no sense rather than as an error.
+---
 
-## Contributing
+## 📄 License
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## License
-
-MIT
+Distributed under the **MIT License**. See [LICENSE](LICENSE.txt) for details.
