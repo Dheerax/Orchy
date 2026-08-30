@@ -1,5 +1,5 @@
 {
-  "name": "orchy",
+  "name": "orchy-ai",
   "displayName": "Orchy",
   "description": "Multi-agent coding orchestration for VS Code. An orchestrator plans a pipeline you approve; every agent runs in its own git worktree; you watch the branches diverge and merge.",
   "version": "0.39.1",
